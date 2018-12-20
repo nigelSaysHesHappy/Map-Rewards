@@ -5,7 +5,7 @@
 #include <colors>
 #include <strplus>
 
-#define VERSION "0.159"
+#define VERSION "0.161"
 
 #define MAXSPAWNPOINT       128
 #define MAXALIASES          128
@@ -77,6 +77,7 @@ new String:entName[MAXSPAWNPOINT][32];
 new Float:entSpin[MAXSPAWNPOINT][3];
 new Float:entSpinInt[MAXSPAWNPOINT];
 new Float:entSpinAngles[MAXSPAWNPOINT][3];
+new Handle:entTimers[MAXSPAWNPOINT] = { INVALID_HANDLE, ... };
 new aliasCount = 0;
 new scriptCount = 0;
 
@@ -1435,6 +1436,11 @@ killReward(index)
     {
         new ent = spawnEnts[index];
         spawnEnts[index] = -1;
+        if (entTimers[index] != INVALID_HANDLE)
+        {
+            KillTimer(entTimers[index]);
+            entTimers[index] = INVALID_HANDLE;
+        }
         if (IsValidEntity(ent))
         {
             decl String:temp[32];
@@ -1504,6 +1510,11 @@ resetReward(index)
     respawnTime[index] = -1.0;
     entName[index] = "";
     entSpin[index][0] = entSpin[index][1] = entSpin[index][2] = entSpinInt[index] = 0.0;
+    if (entTimers[index] != INVALID_HANDLE)
+    {
+        KillTimer(entTimers[index]);
+        entTimers[index] = INVALID_HANDLE;
+    }
 }
 
 resetRewards()
@@ -2951,7 +2962,7 @@ spawnReward(index)
         if (entSpinInt[index] > 0.0)
         {
             entSpinAngles[index] = defSpawnAngles[index];
-            CreateTimer(entSpinInt[index], timerSpinEnt, index, TIMER_REPEAT);
+            entTimers[index] = CreateTimer(entSpinInt[index], timerSpinEnt, index, TIMER_REPEAT);
         }
         spawnEnts[index] = entReward;
     }
@@ -3010,8 +3021,11 @@ public Action:timerSpinEnt(Handle:Timer, any:index)
 {
     if (g_enable)
     {
-        if ((index < 0) || (spawnEnts[index] < 0))
+        if ((index < 0) || (spawnEnts[index] < 0) || (!IsValidEntity(spawnEnts[index])))
+        {
+            entTimers[index] = INVALID_HANDLE;
             return Plugin_Stop;
+        }
         for (new i = 0;i < 3;i++)
         {
             entSpinAngles[index][i] += entSpin[index][i];
