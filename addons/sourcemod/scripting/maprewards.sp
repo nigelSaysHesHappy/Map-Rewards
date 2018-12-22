@@ -5,7 +5,7 @@
 #include <colors>
 #include <strplus>
 
-#define VERSION "0.161"
+#define VERSION "0.166"
 
 #define MAXSPAWNPOINT       128
 #define MAXALIASES          128
@@ -432,7 +432,7 @@ public Action:releaseReward(client, args)
     }
     decl String:buffer[32];
     GetCmdArg(1,buffer,32);
-    new tempID = getRewardID(buffer);
+    new tempID = getRewardID(buffer,client);
     if (tempID > -1)
     {
         decl String:cmdC[1024];
@@ -464,7 +464,7 @@ public Action:copyReward(client, args)
     }
     decl String:buffer[64];
     GetCmdArg(1,buffer,64);
-    new tempID = getRewardID(buffer);
+    new tempID = getRewardID(buffer,client);
     if ((tempID < 0) || (tempID >= MAXSPAWNPOINT) || (strlen(entType[tempID]) == 0))
     {
         RespondToCommand(client, "[SM] Error: Unknown reward '%s'",buffer);
@@ -538,7 +538,7 @@ public Action:copyRewardHere(client, args)
     }
     decl String:buffer[64];
     GetCmdArg(1,buffer,64);
-    new tempID = getRewardID(buffer);
+    new tempID = getRewardID(buffer,client);
     if ((tempID < 0) || (tempID >= MAXSPAWNPOINT) || (strlen(entType[tempID]) == 0))
     {
         RespondToCommand(client, "[SM] Error: Unknown reward '%s'",buffer);
@@ -610,7 +610,7 @@ public Action:moveReward(client, args)
     }
     decl String:buffer[32];
     GetCmdArg(1,buffer,32);
-    new tempID = getRewardID(buffer);
+    new tempID = getRewardID(buffer,client);
     tempID = StringToInt(buffer);
     if ((tempID < 0) || (tempID >= MAXSPAWNPOINT) || (strlen(entType[tempID]) == 0))
     {
@@ -638,7 +638,7 @@ public Action:turnReward(client, args)
     }
     decl String:buffer[16];
     GetCmdArg(1,buffer,16);
-    new tempID = getRewardID(buffer);
+    new tempID = getRewardID(buffer,client);
     if ((tempID < 0) || (tempID >= MAXSPAWNPOINT) || (strlen(entType[tempID]) == 0))
     {
         RespondToCommand(client, "[SM] Error: Unknown reward '%s'",buffer);
@@ -672,15 +672,26 @@ public Action:tpPlayer(client, args)
     decl target_count;
     decl bool:tn_is_ml;
     GetCmdArg(1,target,32);
-    new tempID = getRewardID(target);
+    new tempID = getRewardID(target,client);
     if ((tempID < 0) || (tempID >= MAXSPAWNPOINT) || (strlen(entType[tempID]) == 0))
     {
         RespondToCommand(client, "[SM] Error: Unknown reward '%s'",target);
         return Plugin_Handled;
     }
-    new Float:rCoords[3][3];
-    rCoords[0] = defSpawnCoords[tempID];
-    rCoords[1] = defSpawnAngles[tempID];
+    new Float:rCoords[4][3];
+    //rCoords[0] = defSpawnCoords[tempID];
+    //rCoords[1] = defSpawnAngles[tempID];
+    if (spawnEnts[tempID] > -1)
+    {
+        GetEntPropVector(spawnEnts[tempID],Prop_Data,"m_vecOrigin",rCoords[0]);
+        GetEntPropVector(spawnEnts[tempID],Prop_Data,"m_angRotation",rCoords[1]);
+    }
+    else
+    {
+        rCoords[0] = defSpawnCoords[tempID];
+        rCoords[1] = defSpawnAngles[tempID];
+    }
+    new bool:relativeV[4];
     new nextArg = 2;
     switch (args)
     {
@@ -720,6 +731,8 @@ public Action:tpPlayer(client, args)
             GetCmdArg(nextArg++,temp,16);
             if (temp[0] == '~')
             {
+                if (h == 2)
+                    relativeV[3] = relativeV[i] = true;
                 if (strlen(temp) > 1)
                 {
                     StrErase(temp,0,1);
@@ -730,9 +743,18 @@ public Action:tpPlayer(client, args)
                 rCoords[h][i] = StringToFloat(temp);
         }
     }
+    rCoords[3] = rCoords[2];
     for (new i = 0;i < target_count;i++)
-        TeleportEntity(target_list[i], rCoords[0], rCoords[1], rCoords[2]);
-    //TeleportEntity(client, defSpawnCoords[tempID], NULL_VECTOR, NULL_VECTOR);
+    {
+        if (relativeV[3])
+        {
+            GetEntPropVector(target_list[i],Prop_Data,"m_vecVelocity",rCoords[3]);
+            for (new h = 0;h < 3;h++)
+                if (relativeV[h])
+                    rCoords[3][h] += rCoords[2][h];
+        }
+        TeleportEntity(target_list[i], rCoords[0], rCoords[1], rCoords[3]);
+    }
     return Plugin_Handled;
 }
 
@@ -788,8 +810,8 @@ public Action:infoSpawnPoint(client, args)
     }
     decl String:buffer[32];
     GetCmdArg(1,buffer,32);
-    new tempID = getRewardID(buffer);
-    if ((tempID < 0) || (tempID >= MAXSPAWNPOINT) || (strcmp(entType[tempID],"") == 0))
+    new tempID = getRewardID(buffer,client);
+    if ((tempID < 0) || (tempID >= MAXSPAWNPOINT) || (strlen(entType[tempID]) < 1))
     {
         RespondToCommand(client, "[SM] Unknown reward '%s'",buffer);
         return Plugin_Handled;
@@ -1154,7 +1176,7 @@ public Action:writeCFG(client, args)
                     else
                     {
                         GetCmdArg(++nextArg,buffer,64);
-                        new base = getRewardID(buffer);
+                        new base = getRewardID(buffer,client);
                         if (base < 0)
                         {
                             RespondToCommand(client, "[SM] Error: Unknown reward '%s'",buffer);
@@ -1315,7 +1337,7 @@ public Action:loadCFG(client, args)
                     else
                     {
                         GetCmdArg(++nextArg,buffer,64);
-                        new base = getRewardID(buffer);
+                        new base = getRewardID(buffer,client);
                         if (base < 0)
                         {
                             RespondToCommand(client, "[SM] Error: Unknown reward '%s'",buffer);
@@ -2262,7 +2284,7 @@ public Action:modifySpawnPoint(client, args)
     }
     decl String:buffer[128];
     GetCmdArg(1,buffer,128);
-    new spawnPoints = getRewardID(buffer);
+    new spawnPoints = getRewardID(buffer,client);
     if (spawnPoints < 0)
     {
         RespondToCommand(client, "[SM] Error: Unknown reward '%s'",buffer);
@@ -2307,7 +2329,7 @@ public Action:modifySpawnPoint(client, args)
                     else
                     {
                         GetCmdArg(++nextArg,buffer,64);
-                        new base = getRewardID(buffer);
+                        new base = getRewardID(buffer,client);
                         if (base < 0)
                         {
                             resetReward(spawnPoints);
@@ -2471,7 +2493,7 @@ public Action:modifySpawnPoint(client, args)
                     else
                     {
                         GetCmdArg(++nextArg,buffer,64);
-                        new base = getRewardID(buffer);
+                        new base = getRewardID(buffer,client);
                         if (base < 0)
                             RespondToCommand(client, "[SM] Error: Unknown reward '%s', not changing origin.",buffer);
                         else
@@ -2639,10 +2661,33 @@ public Action:modifySpawnPoint(client, args)
     return Plugin_Handled;
 }
 
-stock getRewardID(const String:name[])
+stock getRewardID(const String:name[], any:client = 0)
 {
     new id = -1;
-    if (StrIsDigit(name) > -1)
+    if ((client > 0) && (strcmp(name,"@n") == 0))
+    {
+        new Float:distance[2];
+        new Float:dCoords[2][3];
+        GetClientAbsOrigin(client,dCoords[0]);
+        new bool:initialized;
+        for (new i = 0;i < MAXSPAWNPOINT;i++)
+        {
+            if (strlen(entType[i]) < 1)
+                continue;
+            if (spawnEnts[i] > -1)
+                GetEntPropVector(spawnEnts[i],Prop_Data,"m_vecOrigin",dCoords[1]);
+            else
+                dCoords[1] = defSpawnCoords[i];
+            distance[0] = GetVectorDistance(dCoords[0],dCoords[1]);
+            if ((!initialized) || (distance[0] < distance[1]))
+            {
+                initialized = true;
+                distance[1] = distance[0];
+                id = i;
+            }
+        }
+    }
+    else if (StrIsDigit(name) > -1)
         id = StringToInt(name);
     else
     {
@@ -2665,7 +2710,7 @@ public Action:removeSpawnPoint(client, args)
         RespondToCommand(client, "[SM] Usage: sm_mrw_remove <#id|name>");
         return Plugin_Handled;
     }
-    decl String:buffer[7];
+    decl String:buffer[32];
     decl range[2];
     new blen;
     new dots;
@@ -2681,7 +2726,7 @@ public Action:removeSpawnPoint(client, args)
         {
             case -1:
             {
-                range[0] = range[1] = getRewardID(buffer);
+                range[0] = range[1] = getRewardID(buffer,client);
             }
             case 0:
             {
@@ -2743,9 +2788,9 @@ public Action:manuallyRespawnReward(client, args)
         RespondToCommand(client, "[SM] Usage: sm_mrw_respawn <#id|name>");
         return Plugin_Handled;
     }
-    decl String:buffer[7], point;
+    decl String:buffer[32], point;
     GetCmdArg(1, buffer, sizeof(buffer));
-    point = getRewardID(buffer);
+    point = getRewardID(buffer,client);
     if (point > -1)
     {
         respawnReward(point);
@@ -2772,6 +2817,7 @@ public Action:mapRewardPickUp(ent, client)
                 Format(target,8,"#%i",GetClientUserId(client));
                 strcopy(cmdC,128,rCommand[index]);
                 ReplaceString(cmdC,128,"#player",target);
+                ReplaceString(cmdC,128,"#reward",entName[index]);
                 ServerCommand(cmdC);
             }
             if (respawnMethod[index] == 0)
