@@ -5,7 +5,7 @@
 #include <colors>
 #include <strplus>
 
-#define VERSION "0.167"
+#define VERSION "0.168"
 
 #define MAXSPAWNPOINT       128
 #define MAXALIASES          128
@@ -112,11 +112,11 @@ public OnPluginStart()
     RegAdminCmd("sm_mrw_script_add", addScript, ADMFLAG_SLAY, "Adds a script alias. Does not save.");
     RegAdminCmd("sm_mrw_script_save", saveScript, ADMFLAG_SLAY, "Saves the current scripts to 'cfg/maprewards/scripts.cfg'.");
     RegAdminCmd("sm_mrw_script_list", listScript, ADMFLAG_SLAY, "Lists all current scripts.");
-    RegAdminCmd("sm_mrw_cfg_save", writeCFG, ADMFLAG_SLAY, "Saves current reward spawn points to a cfg file for later reuse.");
+    RegAdminCmd("sm_mrw_cfg_save", writeCFG, ADMFLAG_ROOT, "Saves current reward spawn points to a cfg file for later reuse.");
     RegAdminCmd("sm_mrw_cfg_load", loadCFG, ADMFLAG_SLAY, "Loads a saved maprewards cfg file.");
     RegAdminCmd("sm_mrw_cfg_list", listSavedCFG, ADMFLAG_SLAY, "Lists all saved maprewards cfg files.");
-    RegAdminCmd("sm_mrw_cfg_delete", deleteSavedCFG, ADMFLAG_SLAY, "Deletes a saved maprewards cfg file.");
-    RegAdminCmd("sm_mrw_cfg_purge", purgeSavedCFG, ADMFLAG_SLAY, "Deletes all auto-save backup maprewards cfg files.");
+    RegAdminCmd("sm_mrw_cfg_delete", deleteSavedCFG, ADMFLAG_ROOT, "Deletes a saved maprewards cfg file.");
+    RegAdminCmd("sm_mrw_cfg_purge", purgeSavedCFG, ADMFLAG_ROOT, "Deletes all auto-save backup maprewards cfg files.");
     RegAdminCmd("sm_mrw_tp", tpPlayer, ADMFLAG_SLAY, "Teleports you to the provided reward.");
     RegAdminCmd("sm_mrw_move", moveReward, ADMFLAG_SLAY, "Relatively moves a reward.");
     RegAdminCmd("sm_mrw_turn", turnReward, ADMFLAG_SLAY, "Relatively rotates a reward.");
