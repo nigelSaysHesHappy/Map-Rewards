@@ -5,7 +5,7 @@
 #include <colors>
 #include <strplus>
 
-#define VERSION "0.166"
+#define VERSION "0.167"
 
 #define MAXSPAWNPOINT       128
 #define MAXALIASES          128
@@ -1089,7 +1089,7 @@ public Action:writeCFG(client, args)
                         {
                             case -1:
                             {
-                                range[0] = range[1] = getRewardID(buffer);
+                                range[0] = range[1] = getRewardID(buffer,client);
                             }
                             case 0:
                             {
