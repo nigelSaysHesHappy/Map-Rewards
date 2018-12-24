@@ -5,7 +5,7 @@
 #include <colors>
 #include <strplus>
 
-#define VERSION "0.173"
+#define VERSION "0.178"
 
 #define MAXSPAWNPOINT       128
 #define MAXALIASES          128
@@ -87,6 +87,8 @@ new Float:entSpinInt[MAXSPAWNPOINT];
 new Float:entSpinAngles[MAXSPAWNPOINT][3];
 new Handle:entTimers[MAXSPAWNPOINT] = { INVALID_HANDLE, ... };
 new rewardKiller[MAXSPAWNPOINT];
+new Float:entHealth[MAXSPAWNPOINT];
+new Float:entDamage[MAXSPAWNPOINT];
 new aliasCount = 0;
 new scriptCount = 0;
 
@@ -806,6 +808,8 @@ stock buildRewardCmd(index, String:cmdC[], cmdSize, bool:relative = false, const
         Format(cmdC,cmdSize,"%s -d %i",cmdC,(respawnMethod[index] & ~HOOK_DEACTIVE));
         if (respawnTime[index] >= 0.0)
             Format(cmdC,cmdSize,"%s -t %.2f",cmdC,respawnTime[index]);
+        if (entHealth[index] > 0.0)
+            Format(cmdC,cmdSize,"%s -A %.2f",cmdC,entHealth[index]);
         if (strlen(rCommand[index]) > 0)
             Format(cmdC,cmdSize,"%s %s",cmdC,rCommand[index]);
     }
@@ -1548,6 +1552,8 @@ resetReward(index)
         entTimers[index] = INVALID_HANDLE;
     }
     rewardKiller[index] = 0;
+    entHealth[index] = 0.0;
+    entDamage[index] = 0.0;
 }
 
 resetRewards()
@@ -1816,13 +1822,11 @@ public Action:addSpawnPoint(client, args)
                 }
                 case 'S': // Shortcut for -d static
                 {
-                    //respawnMethod[spawnPoints] &= ~HOOK_PICKUP;
                     respawnMethod[spawnPoints] &= ~HOOK_CONSTANT;
                     respawnMethod[spawnPoints] |= HOOK_STATIC|HOOK_TOUCH;
                 }
                 case 'C': // Shortcut for -d static
                 {
-                    //respawnMethod[spawnPoints] &= ~HOOK_PICKUP;
                     respawnMethod[spawnPoints] &= ~HOOK_STATIC;
                     respawnMethod[spawnPoints] |= HOOK_CONSTANT|HOOK_TOUCH;
                 }
@@ -1838,9 +1842,20 @@ public Action:addSpawnPoint(client, args)
                 {
                     respawnMethod[spawnPoints] &= ~HOOK_TOUCH;
                 }
-                //case 'S': respawnMethod[spawnPoints] =  1; // Shortcut for -d static
-                //case 'C': respawnMethod[spawnPoints] =  2; // Shortcut for -d constant
-                case 'b':
+                case 'A': // heAlth
+                {
+                    if (lastArg)
+                        err = true;
+                    else
+                    {
+                        GetCmdArg(++nextArg,buffer,64);
+                        if (!StrIsDigit(buffer))
+                            err = true;
+                        else
+                            entHealth[spawnPoints] = StringToFloat(buffer);
+                    }
+                }
+                case 'b': // Base
                 {
                     if (lastArg)
                         err = true;
@@ -1867,12 +1882,24 @@ public Action:addSpawnPoint(client, args)
                 }
                 case 'c': // Coords
                 {
-                    if ((args-nextArg) < 3)
+                    if (lastArg)
                         err = true;
                     else
                     {
-                        for (new i = 0;i < 3;i++)
-                            GetCmdArg(++nextArg,strCoords[i],16);
+                        GetCmdArg(nextArg+1,buffer,64);
+                        if (strcmp(buffer,"@aim") == 0)
+                        {
+                            nextArg++;
+                            if ((client > 0) && (IsClientInGame(client)))
+                                SetTeleportEndPoint(client,defSpawnCoords[spawnPoints]);
+                        }
+                        else if ((args-nextArg) < 3)
+                            err = true;
+                        else
+                        {
+                            for (new i = 0;i < 3;i++)
+                                GetCmdArg(++nextArg,strCoords[i],16);
+                        }
                     }
                 }
                 case 'd': // respawn methoD
@@ -1972,23 +1999,35 @@ public Action:addSpawnPoint(client, args)
                 }
                 case 'o': // Origin coords
                 {
-                    if ((args-nextArg) < 3)
+                    if (lastArg)
                         err = true;
                     else
                     {
-                        for (new i = 0;i < 3;i++)
+                        GetCmdArg(nextArg+1,buffer,64);
+                        if (strcmp(buffer,"@aim") == 0)
                         {
-                            GetCmdArg(++nextArg,buffer,17);
-                            if (buffer[0] == '~')
+                            nextArg++;
+                            if ((client > 0) && (IsClientInGame(client)))
+                                SetTeleportEndPoint(client,defSpawnCoords[spawnPoints]);
+                        }
+                        else if ((args-nextArg) < 3)
+                            err = true;
+                        else
+                        {
+                            for (new i = 0;i < 3;i++)
                             {
-                                if (strlen(buffer) > 1)
+                                GetCmdArg(++nextArg,buffer,17);
+                                if (buffer[0] == '~')
                                 {
-                                    StrErase(buffer,0,1);
-                                    defSpawnCoords[spawnPoints][i] += StringToFloat(buffer);
+                                    if (strlen(buffer) > 1)
+                                    {
+                                        StrErase(buffer,0,1);
+                                        defSpawnCoords[spawnPoints][i] += StringToFloat(buffer);
+                                    }
                                 }
+                                else
+                                    defSpawnCoords[spawnPoints][i] = StringToFloat(buffer);
                             }
-                            else
-                                defSpawnCoords[spawnPoints][i] = StringToFloat(buffer);
                         }
                     }
                 }
@@ -2382,9 +2421,6 @@ public Action:modifySpawnPoint(client, args)
             }
             switch (buffer[1])
             {
-                //case 'P': respawnMethod[spawnPoints] =  0; // Shortcut for -d pickup
-                //case 'S': respawnMethod[spawnPoints] =  1; // Shortcut for -d static
-                //case 'C': respawnMethod[spawnPoints] =  2; // Shortcut for -d constant
                 case 'P': // Shortcut for -d pickup
                 {
                     respawnMethod[spawnPoints] &= ~HOOK_STATIC;
@@ -2393,13 +2429,11 @@ public Action:modifySpawnPoint(client, args)
                 }
                 case 'S': // Shortcut for -d static
                 {
-                    //respawnMethod[spawnPoints] &= ~HOOK_PICKUP;
                     respawnMethod[spawnPoints] &= ~HOOK_CONSTANT;
                     respawnMethod[spawnPoints] |= HOOK_STATIC|HOOK_TOUCH;
                 }
                 case 'C': // Shortcut for -d static
                 {
-                    //respawnMethod[spawnPoints] &= ~HOOK_PICKUP;
                     respawnMethod[spawnPoints] &= ~HOOK_STATIC;
                     respawnMethod[spawnPoints] |= HOOK_CONSTANT|HOOK_TOUCH;
                 }
@@ -2414,6 +2448,19 @@ public Action:modifySpawnPoint(client, args)
                 case 'N': // Shortcut for -d notouch
                 {
                     respawnMethod[spawnPoints] &= ~HOOK_TOUCH;
+                }
+                case 'A': // heAlth
+                {
+                    if (lastArg)
+                        err = true;
+                    else
+                    {
+                        GetCmdArg(++nextArg,buffer,64);
+                        if (!StrIsDigit(buffer))
+                            err = true;
+                        else
+                            entHealth[spawnPoints] = StringToFloat(buffer);
+                    }
                 }
                 case 'b':
                 {
@@ -2442,33 +2489,26 @@ public Action:modifySpawnPoint(client, args)
                 }
                 case 'c': // Coords
                 {
-                    if ((args-nextArg) < 3)
-                        err = true;
-                    else
-                    {
-                        for (new i = 0;i < 3;i++)
-                            GetCmdArg(++nextArg,strCoords[i],16);
-                    }
-                }
-                /*case 'd': // respawn methoD
-                {
                     if (lastArg)
                         err = true;
                     else
                     {
-                        GetCmdArg(++nextArg,buffer,64);
-                        if (strcmp(buffer,"pickup") == 0)
-                            respawnMethod[spawnPoints] = 0;
-                        else if (strcmp(buffer,"static") == 0)
-                            respawnMethod[spawnPoints] = 1;
-                        else if ((strcmp(buffer,"nohook") == 0) || (strcmp(buffer,"nopickup") == 0))
-                            respawnMethod[spawnPoints] = -1;
-                        else if (strcmp(buffer,"constant") == 0)
-                            respawnMethod[spawnPoints] = 2;
+                        GetCmdArg(nextArg+1,buffer,64);
+                        if (strcmp(buffer,"@aim") == 0)
+                        {
+                            nextArg++;
+                            if ((client > 0) && (IsClientInGame(client)))
+                                SetTeleportEndPoint(client,defSpawnCoords[spawnPoints]);
+                        }
+                        else if ((args-nextArg) < 3)
+                            err = true;
                         else
-                            respawnMethod[spawnPoints] = StringToInt(buffer);
+                        {
+                            for (new i = 0;i < 3;i++)
+                                GetCmdArg(++nextArg,strCoords[i],16);
+                        }
                     }
-                }*/
+                }
                 case 'd': // respawn methoD
                 {
                     if (lastArg)
@@ -2559,23 +2599,35 @@ public Action:modifySpawnPoint(client, args)
                 }
                 case 'o': // Origin coords
                 {
-                    if ((args-nextArg) < 3)
+                    if (lastArg)
                         err = true;
                     else
                     {
-                        for (new i = 0;i < 3;i++)
+                        GetCmdArg(nextArg+1,buffer,64);
+                        if (strcmp(buffer,"@aim") == 0)
                         {
-                            GetCmdArg(++nextArg,buffer,17);
-                            if (buffer[0] == '~')
+                            nextArg++;
+                            if ((client > 0) && (IsClientInGame(client)))
+                                SetTeleportEndPoint(client,defSpawnCoords[spawnPoints]);
+                        }
+                        else if ((args-nextArg) < 3)
+                            err = true;
+                        else
+                        {
+                            for (new i = 0;i < 3;i++)
                             {
-                                if (strlen(buffer) > 1)
+                                GetCmdArg(++nextArg,buffer,17);
+                                if (buffer[0] == '~')
                                 {
-                                    StrErase(buffer,0,1);
-                                    defSpawnCoords[spawnPoints][i] += StringToFloat(buffer);
+                                    if (strlen(buffer) > 1)
+                                    {
+                                        StrErase(buffer,0,1);
+                                        defSpawnCoords[spawnPoints][i] += StringToFloat(buffer);
+                                    }
                                 }
+                                else
+                                    defSpawnCoords[spawnPoints][i] = StringToFloat(buffer);
                             }
-                            else
-                                defSpawnCoords[spawnPoints][i] = StringToFloat(buffer);
                         }
                     }
                 }
@@ -2980,8 +3032,6 @@ public Action:mapRewardTakeDamage(ent, &client, &inflictor, &Float:damage, &dama
             if (spawnEnts[i] == ent) index = i;
         if (index > -1)
         {
-            //new Float:eHealth = GetEntProp(ent,Prop_Send,"m_iHealth");
-            //eHealth -= damage;
             //if ((damageMethod[index] != 1) || (respawnMethod[index] == 2))
             if ((!(respawnMethod[index] & HOOK_KILL)) || (respawnMethod[index] & HOOK_CONSTANT))
                 triggerReward(index,client,inflictor);
@@ -2993,6 +3043,7 @@ public Action:mapRewardTakeDamage(ent, &client, &inflictor, &Float:damage, &dama
             if (respawnMethod[index] & HOOK_KILL)
             {
                 rewardKiller[index] = client;
+                entDamage[index] += damage;
                 CreateTimer(0.001, rewardTakeDamagePost, index);
             }
             else
@@ -3018,6 +3069,8 @@ public Action:mapRewardTakeDamage(ent, &client, &inflictor, &Float:damage, &dama
 // Only trigger if the reward was killed
 public Action:rewardTakeDamagePost(Handle:Timer, any:index)
 {
+    if ((entHealth[index]) && (entHealth[index]-entDamage[index] <= 0.0))
+        killReward(index);
     if (!IsValidEntity(spawnEnts[index]))
     {
         triggerReward(index,rewardKiller[index]);
@@ -3027,6 +3080,16 @@ public Action:rewardTakeDamagePost(Handle:Timer, any:index)
         else if (respawnTime[index] > 0.0)
             CreateTimer(respawnTime[index], timerRespawnReward, index);
     }
+    /*else if ((entHealth[index] != NOHEALTH_TRACK) && (entHealth[index] < 1.0))
+    {
+        killReward(index);
+        triggerReward(index,rewardKiller[index]);
+        respawnMethod[index] &= ~HOOK_DEACTIVE;
+        if (respawnTime[index] < 0.0)
+            CreateTimer(g_respawnTime, timerRespawnReward, index);
+        else if (respawnTime[index] > 0.0)
+            CreateTimer(respawnTime[index], timerRespawnReward, index);
+    }*/
     return Plugin_Stop;
 }
 
@@ -3052,6 +3115,8 @@ spawnReward(index)
 {
     if ((strlen(entType[index]) == 0) || (GetRealClientCount() < 1))
         return;
+    
+    entDamage[index] = 0.0;
     
     if (respawnMethod[index] & HOOK_DEACTIVE)
     {
@@ -3311,5 +3376,47 @@ public Action:timerSpinEnt(Handle:Timer, any:index)
         return Plugin_Continue;
     }
     return Plugin_Stop;
+}
+
+// Borrowed from pumpkin.sp by linux_lover aka pheadxdll: https://forums.alliedmods.net/showthread.php?p=976177
+// From pheadxdll: "Credits to Spaz & Arg for the positioning code. Taken from FuncommandsX."
+// Slightly modified to remove globals.
+stock bool:SetTeleportEndPoint(client, Float:pos[3])
+{
+	decl Float:vAngles[3];
+	decl Float:vOrigin[3];
+	decl Float:vBuffer[3];
+	decl Float:vStart[3];
+	decl Float:Distance;
+	
+	GetClientEyePosition(client,vOrigin);
+	GetClientEyeAngles(client, vAngles);
+	
+    //get endpoint for teleport
+	new Handle:trace = TR_TraceRayFilterEx(vOrigin, vAngles, MASK_SHOT, RayType_Infinite, TraceEntityFilterPlayer);
+
+	if(TR_DidHit(trace))
+	{   	 
+   	 	TR_GetEndPosition(vStart, trace);
+		GetVectorDistance(vOrigin, vStart, false);
+		Distance = -35.0;
+   	 	GetAngleVectors(vAngles, vBuffer, NULL_VECTOR, NULL_VECTOR);
+		pos[0] = vStart[0] + (vBuffer[0]*Distance);
+		pos[1] = vStart[1] + (vBuffer[1]*Distance);
+		pos[2] = vStart[2] + (vBuffer[2]*Distance);
+	}
+	else
+	{
+		CloseHandle(trace);
+		return false;
+	}
+	
+	CloseHandle(trace);
+	return true;
+}
+
+public bool:TraceEntityFilterPlayer(entity, contentsMask)
+{
+	return entity > GetMaxClients() || !entity;
 }
 
