@@ -5,7 +5,7 @@
 #include <colors>
 #include <strplus>
 
-#define VERSION "0.178"
+#define VERSION "0.179"
 
 #define MAXSPAWNPOINT       128
 #define MAXALIASES          128
@@ -1703,6 +1703,9 @@ stock RespondUsage(client)
     CRespondToCommand(client, "[SM]       If present, {green}#player{default} will be replaced with the target string of the client who activated the reward.");
     CRespondToCommand(client, "[SM]    {green}OPTIONS{default}:");
     CRespondToCommand(client, "[SM]       -h   Display this help text.");
+    CRespondToCommand(client, "[SM]       -A <{green}health{default}>");
+    CRespondToCommand(client, "[SM]          Set an internal health amount for the reward.");
+    CRespondToCommand(client, "[SM]          Only used when {green}respawn_method{default} is {green}kill{deafult} to kill the reward after it takes this much damage.");
     CRespondToCommand(client, "[SM]       -b <{green}#reward_id|name>");
     CRespondToCommand(client, "[SM]          Uses the provided reward as a base to copy data from.");
     CRespondToCommand(client, "[SM]          This switch should appear before anything else as it overwrites all the data.");
