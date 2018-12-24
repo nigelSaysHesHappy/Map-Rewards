@@ -5,7 +5,7 @@
 #include <colors>
 #include <strplus>
 
-#define VERSION "0.168"
+#define VERSION "0.172"
 
 #define MAXSPAWNPOINT       128
 #define MAXALIASES          128
@@ -31,6 +31,14 @@
 #define SAVE_EDIT           16
 #define SAVE_REMOVE         32
 #define SAVE_BACKUP         64
+
+#define HOOK_NOHOOK         0
+#define HOOK_DEACTIVE       1
+#define HOOK_TOUCH          2
+#define HOOK_HURT           4
+#define HOOK_STATIC         8
+#define HOOK_CONSTANT       16
+#define HOOK_KILL           32
 
 public Plugin:myinfo =
 {
@@ -72,12 +80,13 @@ new String:scripts[MAXSCRIPTS][2][MAXINPUT];
 new String:script[MAXSPAWNPOINT][2][MAXINPUT];
 new String:entType[MAXSPAWNPOINT][64];
 new Float:respawnTime[MAXSPAWNPOINT] = { -1.0, ... };
-new respawnMethod[MAXSPAWNPOINT] = { -1, ... };
+new respawnMethod[MAXSPAWNPOINT];// = { -1, ... };
 new String:entName[MAXSPAWNPOINT][32];
 new Float:entSpin[MAXSPAWNPOINT][3];
 new Float:entSpinInt[MAXSPAWNPOINT];
 new Float:entSpinAngles[MAXSPAWNPOINT][3];
 new Handle:entTimers[MAXSPAWNPOINT] = { INVALID_HANDLE, ... };
+new rewardKiller[MAXSPAWNPOINT];
 new aliasCount = 0;
 new scriptCount = 0;
 
@@ -785,15 +794,16 @@ stock buildRewardCmd(index, String:cmdC[], cmdSize, bool:relative = false, const
         Format(cmdC,cmdSize,"%s -p %s",cmdC,script[index][1]);
     if (entSpinInt[index] > 0.0)
         Format(cmdC,cmdSize,"%s -T %f %f %f %.1f",cmdC,entSpin[index][0],entSpin[index][1],entSpin[index][2],entSpinInt[index]);
-    if (respawnMethod[index] > -1)
+    if (respawnMethod[index] != HOOK_NOHOOK)
     {
-        switch (respawnMethod[index])
+        /*switch (respawnMethod[index])
         {
             case 0: StrCat(cmdC,cmdSize," -P");
             case 1: StrCat(cmdC,cmdSize," -S");
             case 2: StrCat(cmdC,cmdSize," -C");
             default: Format(cmdC,cmdSize,"%s -d %i",cmdC,respawnMethod[index]);
-        }
+        }*/
+        Format(cmdC,cmdSize,"%s -d %i",cmdC,respawnMethod[index]);
         if (respawnTime[index] >= 0.0)
             Format(cmdC,cmdSize,"%s -t %.2f",cmdC,respawnTime[index]);
         if (strlen(rCommand[index]) > 0)
@@ -1528,7 +1538,7 @@ resetReward(index)
     script[index][0] = "";
     script[index][1] = "";
     entType[index] = "";
-    respawnMethod[index] = -1;
+    respawnMethod[index] = HOOK_NOHOOK;
     respawnTime[index] = -1.0;
     entName[index] = "";
     entSpin[index][0] = entSpin[index][1] = entSpin[index][2] = entSpinInt[index] = 0.0;
@@ -1537,6 +1547,7 @@ resetReward(index)
         KillTimer(entTimers[index]);
         entTimers[index] = INVALID_HANDLE;
     }
+    rewardKiller[index] = 0;
 }
 
 resetRewards()
@@ -1791,9 +1802,38 @@ public Action:addSpawnPoint(client, args)
             }
             switch (buffer[1])
             {
-                case 'P': respawnMethod[spawnPoints] =  0; // Shortcut for -d pickup
-                case 'S': respawnMethod[spawnPoints] =  1; // Shortcut for -d static
-                case 'C': respawnMethod[spawnPoints] =  2; // Shortcut for -d constant
+                case 'P': // Shortcut for -d pickup
+                {
+                    respawnMethod[spawnPoints] &= ~HOOK_STATIC;
+                    respawnMethod[spawnPoints] &= ~HOOK_CONSTANT;
+                    respawnMethod[spawnPoints] |= HOOK_TOUCH;
+                }
+                case 'S': // Shortcut for -d static
+                {
+                    //respawnMethod[spawnPoints] &= ~HOOK_PICKUP;
+                    respawnMethod[spawnPoints] &= ~HOOK_CONSTANT;
+                    respawnMethod[spawnPoints] |= HOOK_STATIC|HOOK_TOUCH;
+                }
+                case 'C': // Shortcut for -d static
+                {
+                    //respawnMethod[spawnPoints] &= ~HOOK_PICKUP;
+                    respawnMethod[spawnPoints] &= ~HOOK_STATIC;
+                    respawnMethod[spawnPoints] |= HOOK_CONSTANT|HOOK_TOUCH;
+                }
+                case 'H': // Shortcut for -d hurt
+                {
+                    respawnMethod[spawnPoints] |= HOOK_HURT;
+                }
+                case 'K': // Shortcut for -d kill
+                {
+                    respawnMethod[spawnPoints] |= HOOK_HURT|HOOK_KILL;
+                }
+                case 'N': // Shortcut for -d notouch
+                {
+                    respawnMethod[spawnPoints] &= ~HOOK_TOUCH;
+                }
+                //case 'S': respawnMethod[spawnPoints] =  1; // Shortcut for -d static
+                //case 'C': respawnMethod[spawnPoints] =  2; // Shortcut for -d constant
                 case 'b':
                 {
                     if (lastArg)
@@ -1837,13 +1877,19 @@ public Action:addSpawnPoint(client, args)
                     {
                         GetCmdArg(++nextArg,buffer,64);
                         if (strcmp(buffer,"pickup") == 0)
-                            respawnMethod[spawnPoints] = 0;
+                            respawnMethod[spawnPoints] = HOOK_TOUCH;
                         else if (strcmp(buffer,"static") == 0)
-                            respawnMethod[spawnPoints] = 1;
+                            respawnMethod[spawnPoints] = HOOK_STATIC|HOOK_TOUCH;
                         else if ((strcmp(buffer,"nohook") == 0) || (strcmp(buffer,"nopickup") == 0))
-                            respawnMethod[spawnPoints] = -1;
+                            respawnMethod[spawnPoints] = HOOK_NOHOOK;
                         else if (strcmp(buffer,"constant") == 0)
-                            respawnMethod[spawnPoints] = 2;
+                            respawnMethod[spawnPoints] = HOOK_CONSTANT|HOOK_TOUCH;
+                        else if (strcmp(buffer,"hurt") == 0)
+                            respawnMethod[spawnPoints] |= HOOK_HURT;
+                        else if (strcmp(buffer,"kill") == 0)
+                            respawnMethod[spawnPoints] = HOOK_HURT|HOOK_KILL;
+                        else if (strcmp(buffer,"notouch") == 0)
+                            respawnMethod[spawnPoints] &= ~HOOK_TOUCH;
                         else
                             respawnMethod[spawnPoints] = StringToInt(buffer);
                     }
@@ -2231,15 +2277,26 @@ public Action:addSpawnPointCustom(client, args)
                 {
                     GetCmdArg(12, buffer, sizeof(buffer));
                     if (strcmp(buffer,"pickup") == 0)
-                        respawnMethod[spawnPoints] = 0;
+                        respawnMethod[spawnPoints] = HOOK_TOUCH;
                     else if (strcmp(buffer,"static") == 0)
-                        respawnMethod[spawnPoints] = 1;
+                        respawnMethod[spawnPoints] = HOOK_STATIC|HOOK_TOUCH;
                     else if ((strcmp(buffer,"nohook") == 0) || (strcmp(buffer,"nopickup") == 0))
-                        respawnMethod[spawnPoints] = -1;
+                        respawnMethod[spawnPoints] = HOOK_NOHOOK;
                     else if (strcmp(buffer,"constant") == 0)
-                        respawnMethod[spawnPoints] = 2;
+                        respawnMethod[spawnPoints] = HOOK_CONSTANT|HOOK_TOUCH;
                     else
-                        respawnMethod[spawnPoints] = StringToInt(buffer);
+                    {
+                        new n = StringToInt(buffer)
+                        switch (n)
+                        {
+                            case -1: respawnMethod[spawnPoints] = HOOK_NOHOOK;
+                            case 0: respawnMethod[spawnPoints] = HOOK_TOUCH;
+                            case 1: respawnMethod[spawnPoints] = HOOK_STATIC|HOOK_TOUCH;
+                            case 2: respawnMethod[spawnPoints] = HOOK_CONSTANT|HOOK_TOUCH;
+                            case 22: respawnMethod[spawnPoints] = HOOK_STATIC|HOOK_DEACTIVE|HOOK_TOUCH;
+                            default: respawnMethod[spawnPoints] = n;
+                        }
+                    }
                     if (args > 12)
                     {
                         for (new i = 13; i <= args; i++)
@@ -2254,7 +2311,7 @@ public Action:addSpawnPointCustom(client, args)
         }
     }
     else
-        respawnMethod[spawnPoints] = -1;
+        respawnMethod[spawnPoints] = HOOK_NOHOOK;
     if (g_enable)
         spawnReward(spawnPoints);
     if (client != 0)
@@ -2319,9 +2376,39 @@ public Action:modifySpawnPoint(client, args)
             }
             switch (buffer[1])
             {
-                case 'P': respawnMethod[spawnPoints] =  0; // Shortcut for -d pickup
-                case 'S': respawnMethod[spawnPoints] =  1; // Shortcut for -d static
-                case 'C': respawnMethod[spawnPoints] =  2; // Shortcut for -d constant
+                //case 'P': respawnMethod[spawnPoints] =  0; // Shortcut for -d pickup
+                //case 'S': respawnMethod[spawnPoints] =  1; // Shortcut for -d static
+                //case 'C': respawnMethod[spawnPoints] =  2; // Shortcut for -d constant
+                case 'P': // Shortcut for -d pickup
+                {
+                    respawnMethod[spawnPoints] &= ~HOOK_STATIC;
+                    respawnMethod[spawnPoints] &= ~HOOK_CONSTANT;
+                    respawnMethod[spawnPoints] |= HOOK_TOUCH;
+                }
+                case 'S': // Shortcut for -d static
+                {
+                    //respawnMethod[spawnPoints] &= ~HOOK_PICKUP;
+                    respawnMethod[spawnPoints] &= ~HOOK_CONSTANT;
+                    respawnMethod[spawnPoints] |= HOOK_STATIC|HOOK_TOUCH;
+                }
+                case 'C': // Shortcut for -d static
+                {
+                    //respawnMethod[spawnPoints] &= ~HOOK_PICKUP;
+                    respawnMethod[spawnPoints] &= ~HOOK_STATIC;
+                    respawnMethod[spawnPoints] |= HOOK_CONSTANT|HOOK_TOUCH;
+                }
+                case 'H': // Shortcut for -d hurt
+                {
+                    respawnMethod[spawnPoints] |= HOOK_HURT;
+                }
+                case 'K': // Shortcut for -d kill
+                {
+                    respawnMethod[spawnPoints] |= HOOK_HURT|HOOK_KILL;
+                }
+                case 'N': // Shortcut for -d notouch
+                {
+                    respawnMethod[spawnPoints] &= ~HOOK_TOUCH;
+                }
                 case 'b':
                 {
                     if (lastArg)
@@ -2357,7 +2444,7 @@ public Action:modifySpawnPoint(client, args)
                             GetCmdArg(++nextArg,strCoords[i],16);
                     }
                 }
-                case 'd': // respawn methoD
+                /*case 'd': // respawn methoD
                 {
                     if (lastArg)
                         err = true;
@@ -2372,6 +2459,31 @@ public Action:modifySpawnPoint(client, args)
                             respawnMethod[spawnPoints] = -1;
                         else if (strcmp(buffer,"constant") == 0)
                             respawnMethod[spawnPoints] = 2;
+                        else
+                            respawnMethod[spawnPoints] = StringToInt(buffer);
+                    }
+                }*/
+                case 'd': // respawn methoD
+                {
+                    if (lastArg)
+                        err = true;
+                    else
+                    {
+                        GetCmdArg(++nextArg,buffer,64);
+                        if (strcmp(buffer,"pickup") == 0)
+                            respawnMethod[spawnPoints] = HOOK_TOUCH;
+                        else if (strcmp(buffer,"static") == 0)
+                            respawnMethod[spawnPoints] = HOOK_STATIC|HOOK_TOUCH;
+                        else if ((strcmp(buffer,"nohook") == 0) || (strcmp(buffer,"nopickup") == 0))
+                            respawnMethod[spawnPoints] = HOOK_NOHOOK;
+                        else if (strcmp(buffer,"constant") == 0)
+                            respawnMethod[spawnPoints] = HOOK_CONSTANT|HOOK_TOUCH;
+                        else if (strcmp(buffer,"hurt") == 0)
+                            respawnMethod[spawnPoints] |= HOOK_HURT;
+                        else if (strcmp(buffer,"kill") == 0)
+                            respawnMethod[spawnPoints] = HOOK_HURT|HOOK_KILL;
+                        else if (strcmp(buffer,"notouch") == 0)
+                            respawnMethod[spawnPoints] &= ~HOOK_TOUCH;
                         else
                             respawnMethod[spawnPoints] = StringToInt(buffer);
                     }
@@ -2793,12 +2905,35 @@ public Action:manuallyRespawnReward(client, args)
     point = getRewardID(buffer,client);
     if (point > -1)
     {
-        respawnReward(point);
+        //respawnReward(point);
+        killReward(point);
+        respawnMethod[point] &= ~HOOK_DEACTIVE;
+        spawnReward(point);
         RespondToCommand(client, "[SM] Respawned reward #%d", point);
     }
     else
         RespondToCommand(client, "[SM] Error: Unknown reward '%s'",buffer);
     return Plugin_Handled;
+}
+
+triggerReward(index, client, inflictor = -1)
+{
+    if ((strlen(rCommand[index]) > 0) && (strcmp(rCommand[index],"foo") != 0))
+    {
+        decl String:cmdC[128];
+        decl String:target[8];
+        Format(target,8,"#%i",GetClientUserId(client));
+        strcopy(cmdC,128,rCommand[index]);
+        ReplaceString(cmdC,128,"#player",target);
+        ReplaceString(cmdC,128,"#reward",entName[index]);
+        if (inflictor > -1)
+        {
+            decl String:flict[8];
+            IntToString(inflictor,flict,8);
+            ReplaceString(cmdC,128,"#inflictor",flict);
+        }
+        ServerCommand(cmdC);
+    }
 }
 
 public Action:mapRewardPickUp(ent, client)
@@ -2810,29 +2945,17 @@ public Action:mapRewardPickUp(ent, client)
             if (spawnEnts[i] == ent) index = i;
         if (index > -1)
         {
-            if ((strlen(rCommand[index]) > 0) && (strcmp(rCommand[index],"foo") != 0))
-            {
-                decl String:cmdC[128];
-                decl String:target[8];
-                Format(target,8,"#%i",GetClientUserId(client));
-                strcopy(cmdC,128,rCommand[index]);
-                ReplaceString(cmdC,128,"#player",target);
-                ReplaceString(cmdC,128,"#reward",entName[index]);
-                ServerCommand(cmdC);
-            }
-            if (respawnMethod[index] == 0)
-            {
-                //AcceptEntityInput(spawnEnts[index], "Kill");
-                //spawnEnts[index] = -1;
-                killReward(index);
-            }
-            else if (respawnMethod[index] == 1)
+            triggerReward(index,client);
+            if (respawnMethod[index] & HOOK_STATIC)
             {
                 SDKUnhook(spawnEnts[index], SDKHook_StartTouch, mapRewardPickUp);
+                respawnMethod[index] |= HOOK_DEACTIVE;
                 //respawnMethod[index] = 22;
             }
-            if (respawnMethod[index] != 2)
+            if (!(respawnMethod[index] & HOOK_CONSTANT))
             {
+                if (!(respawnMethod[index] & HOOK_STATIC))
+                    killReward(index);
                 if (respawnTime[index] < 0.0)
                     CreateTimer(g_respawnTime, timerRespawnReward, index);
                 else if (respawnTime[index] > 0.0)
@@ -2840,6 +2963,65 @@ public Action:mapRewardPickUp(ent, client)
             }
         }
     }
+}
+
+public Action:mapRewardTakeDamage(ent, &client, &inflictor, &Float:damage, &damageType)
+{
+    if ((g_enable) && (client > 0) && (client <= MaxClients) && (IsClientInGame(client)))
+    {
+        new index = -1;
+        for (new i = 0; i < MAXSPAWNPOINT; i++)
+            if (spawnEnts[i] == ent) index = i;
+        if (index > -1)
+        {
+            //new Float:eHealth = GetEntProp(ent,Prop_Send,"m_iHealth");
+            //eHealth -= damage;
+            //if ((damageMethod[index] != 1) || (respawnMethod[index] == 2))
+            if ((!(respawnMethod[index] & HOOK_KILL)) || (respawnMethod[index] & HOOK_CONSTANT))
+                triggerReward(index,client,inflictor);
+            if (respawnMethod[index] & (HOOK_CONSTANT|HOOK_DEACTIVE))
+            {
+                damage = 0.0;
+                return Plugin_Changed;
+            }
+            if (respawnMethod[index] & HOOK_KILL)
+            {
+                rewardKiller[index] = client;
+                CreateTimer(0.001, rewardTakeDamagePost, index);
+            }
+            else
+            {
+                if (respawnMethod[index] & HOOK_STATIC)
+                {
+                    respawnMethod[index] |= HOOK_DEACTIVE;
+                    if (respawnMethod[index] & HOOK_TOUCH)
+                        SDKUnhook(spawnEnts[index], SDKHook_StartTouch, mapRewardPickUp);
+                }
+                else
+                    killReward(index);
+                if (respawnTime[index] < 0.0)
+                    CreateTimer(g_respawnTime, timerRespawnReward, index);
+                else if (respawnTime[index] > 0.0)
+                    CreateTimer(respawnTime[index], timerRespawnReward, index);
+            }
+        }
+    }
+    return Plugin_Continue;
+}
+
+// Only trigger if the reward was killed
+public Action:rewardTakeDamagePost(Handle:Timer, any:index)
+{
+    if (!IsValidEntity(spawnEnts[index]))
+    {
+        triggerReward(index,rewardKiller[index]);
+        respawnMethod[index] &= ~HOOK_DEACTIVE;
+        if (respawnTime[index] < 0.0)
+            CreateTimer(g_respawnTime, timerRespawnReward, index);
+        else if (respawnTime[index] > 0.0)
+            CreateTimer(respawnTime[index], timerRespawnReward, index);
+    }
+    return Plugin_Stop;
 }
 
 //mass,0.1,inertia,1000.0?modelscale,float=2.0&DisableMotion
@@ -2864,6 +3046,30 @@ spawnReward(index)
 {
     if ((strlen(entType[index]) == 0) || (GetRealClientCount() < 1))
         return;
+    
+    if (respawnMethod[index] & HOOK_DEACTIVE)
+    {
+        respawnMethod[index] &= ~HOOK_DEACTIVE;
+        if (IsValidEntity(spawnEnts[index]))
+        {
+            decl String:temp[32];
+            GetEntPropString(spawnEnts[index], Prop_Data, "m_iName", temp, 32);
+            if (strcmp(entName[index],temp) == 0)
+            {
+                if (respawnMethod[index] & HOOK_TOUCH)
+                    SDKHook(spawnEnts[index], SDKHook_StartTouch, mapRewardPickUp);
+                return;
+            } // Don't return here incase the reward does not match so it can be made from scratch
+        }
+        else if (!(respawnMethod[index] & HOOK_STATIC))
+        {
+            if (respawnTime[index] < 0.0)
+                CreateTimer(g_respawnTime, timerRespawnReward, index);
+            else if (respawnTime[index] > 0.0)
+                CreateTimer(respawnTime[index], timerRespawnReward, index);
+            return;
+        }
+    }
     
     killReward(index);
     
@@ -2996,7 +3202,21 @@ spawnReward(index)
 //            AcceptEntityInput(entReward, "DisableMotion");
         //SetEntityGravity(entReward, 1.0); //Doesn't seem to work.
         //HookSingleEntityOutput(entReward, "OnStartTouch", mapRewardPickUp);
-        if (respawnMethod[index] == 22)
+        if (respawnMethod[index] & HOOK_DEACTIVE)
+        {
+            if (respawnTime[index] < 0.0)
+                CreateTimer(g_respawnTime, timerRespawnReward, index);
+            else if (respawnTime[index] > 0.0)
+                CreateTimer(respawnTime[index], timerRespawnReward, index);
+        }
+        else
+        {
+            if (respawnMethod[index] & HOOK_TOUCH)
+                SDKHook(entReward, SDKHook_StartTouch, mapRewardPickUp);
+            if (respawnMethod[index] & HOOK_HURT)
+                SDKHook(entReward, SDKHook_OnTakeDamage, mapRewardTakeDamage);
+        }
+        /*if (respawnMethod[index] == 22)
         {
             if (respawnTime[index] < 0.0)
                 CreateTimer(g_respawnTime, timerRespawnReward, index);
@@ -3004,7 +3224,7 @@ spawnReward(index)
                 CreateTimer(respawnTime[index], timerRespawnReward, index);
         }
         else if (respawnMethod[index] > -1)
-            SDKHook(entReward, SDKHook_StartTouch, mapRewardPickUp);
+            SDKHook(entReward, SDKHook_StartTouch, mapRewardPickUp);*/
         if (entSpinInt[index] > 0.0)
         {
             entSpinAngles[index] = defSpawnAngles[index];
@@ -3046,8 +3266,9 @@ NIGathan: !maprewards_add_here gift null null?DisableMotion&modelscale,float=2.0
 
 respawnReward(index)
 {
-    if (respawnMethod[index] == 22)
-        respawnMethod[index] = 1;
+    /*if (respawnMethod[index] == 22)
+        respawnMethod[index] = 1;*/
+    //respawnMethod[index] &= ~HOOK_DEACTIVE;
     spawnReward(index);
 }
 
