@@ -5,7 +5,7 @@
 #include <colors>
 #include <strplus>
 
-#define VERSION "0.172"
+#define VERSION "0.173"
 
 #define MAXSPAWNPOINT       128
 #define MAXALIASES          128
@@ -803,7 +803,7 @@ stock buildRewardCmd(index, String:cmdC[], cmdSize, bool:relative = false, const
             case 2: StrCat(cmdC,cmdSize," -C");
             default: Format(cmdC,cmdSize,"%s -d %i",cmdC,respawnMethod[index]);
         }*/
-        Format(cmdC,cmdSize,"%s -d %i",cmdC,respawnMethod[index]);
+        Format(cmdC,cmdSize,"%s -d %i",cmdC,(respawnMethod[index] & ~HOOK_DEACTIVE));
         if (respawnTime[index] >= 0.0)
             Format(cmdC,cmdSize,"%s -t %.2f",cmdC,respawnTime[index]);
         if (strlen(rCommand[index]) > 0)
@@ -1709,6 +1709,9 @@ stock RespondUsage(client)
     CRespondToCommand(client, "[SM]          {green}pickup{default}: When a player touches it, it will disappear until the respawn time is up.");
     CRespondToCommand(client, "[SM]          {green}static{default}: The reward will stay, but will be inactive until the respawn time is up.");
     CRespondToCommand(client, "[SM]          {green}constant{default}: The reward will stay and never deactivate.");
+    CRespondToCommand(client, "[SM]          {green}hurt{default}: The reward will trigger when a player hurts it.");
+    CRespondToCommand(client, "[SM]          {green}kill{default}: The reward will trigger when a player kills it.");
+    CRespondToCommand(client, "[SM]          {green}notouch{default}: The reward will not trigger when a player touches it. Can be used after other settings to remove the {green}touch{default} event.");
     CRespondToCommand(client, "[SM]          {green}nohook{default} or {green}nopickup{default}: Default. Just an entity, nothing special about it.");
     CRespondToCommand(client, "[SM]       -e <{green}entity_type{default}>");
     CRespondToCommand(client, "[SM]          The type of entity you wish to create. If not provided, {green}prop_physics_override{default} is used.");
@@ -1754,6 +1757,9 @@ stock RespondUsage(client)
     CRespondToCommand(client, "[SM]       -P   Sets {green}respawn_method{default} to {green}pickup{default}.");
     CRespondToCommand(client, "[SM]       -S   Sets {green}respawn_method{default} to {green}static{default}.");
     CRespondToCommand(client, "[SM]       -C   Sets {green}respawn_method{default} to {green}constant{default}.");
+    CRespondToCommand(client, "[SM]       -H   Adds {green}hurt{default} to the current {green}respawn_method{default}.");
+    CRespondToCommand(client, "[SM]       -K   Adds {green}kill{default} to the current {green}respawn_method{default}.");
+    CRespondToCommand(client, "[SM]       -N   Removes {green}touch{default} events from the current {green}respawn_method{default}.");
     CRespondToCommand(client, "[SM]       -R   Automatically release the reward from the plugin imediately after spawning it.");
 }
 
