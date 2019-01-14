@@ -5,7 +5,7 @@
 #include <colors>
 #include <strplus>
 
-#define VERSION "0.195"
+#define VERSION "0.200"
 
 #define MAXSPAWNPOINT       512
 #define MAXALIASES          128
@@ -684,70 +684,57 @@ public Action:moveReward(client, args)
             return Plugin_Handled;
         }
     }
-    if (args < 4)
+    new bool:needsArgs = true;
+    if (args > 1)
     {
-        RespondToCommand(client,"[SM] Usage: sm_mrw_move <#id|name> <X Y Z>");
-        return Plugin_Handled;
+        decl String:buffer[32];
+        decl String:strCoords[3][16];
+        GetCmdArg(1,buffer,32);
+        GetCmdArg(2,strCoords[0],16);
+        if (strcmp(strCoords[0],"@aim") == 0)
+        {
+            if ((client == 0) || (!IsClientInGame(client)))
+            {
+                RespondToCommand(client,"[SM] Error: You must be in game to use \"@aim\" coordinates.");
+                return Plugin_Handled;
+            }
+            SetTeleportEndPoint(client,strCoords);
+            needsArgs = false;
+        }
     }
-    decl String:buffer[32];
-    decl String:strCoords[3][16];
+    if (needsArgs)
+    {
+        if (args < 4)
+        {
+            RespondToCommand(client,"[SM] Usage: sm_mrw_move <#id|name> <X Y Z>");
+            return Plugin_Handled;
+        }
+        GetCmdArg(3,strCoords[1],16);
+        GetCmdArg(4,strCoords[2],16);
+    }
     decl range[2];
-    new blen;
-    new dots;
-    range[0] = range[1] = -1;
-    GetCmdArg(1,buffer,32);
-    GetCmdArg(2,strCoords[0],16);
-    GetCmdArg(3,strCoords[1],16);
-    GetCmdArg(4,strCoords[2],16);
-    blen = strlen(buffer);
-    switch ((dots = StrFind(buffer,"..")))
+    if (getRewardRange(buffer,range,client))
+        RespondToCommand(client, "[SM] Unknown reward '%s'",buffer);
+    else
     {
-        case -1:
+        for (new i = range[0];i <= range[1];i++)
         {
-            range[0] = range[1] = getRewardID(buffer,client);
-        }
-        case 0:
-        {
-            if (blen > 2)
+            if (isValidReward(i))
             {
-                range[0] = 0;
-                StrErase(buffer,0,2);
-                range[1] = StringToInt(buffer);
+                defSpawnCoords[i][0] += StringToFloat(strCoords[0]);
+                defSpawnCoords[i][1] += StringToFloat(strCoords[1]);
+                defSpawnCoords[i][2] += StringToFloat(strCoords[2]);
+                if (IsValidEntity(spawnEnts[i]))
+                    TeleportEntity(spawnEnts[i], defSpawnCoords[i], defSpawnAngles[i], NULL_VECTOR);
             }
-        }
-        default:
-        {
-            range[0] = StringToInt(buffer);
-            if ((dots += 2) < blen)
-            {
-                StrErase(buffer,0,dots);
-                range[1] = StringToInt(buffer);
-            }
-            else
-                range[1] = MAXSPAWNPOINT-1;
-        }
-    }
-    if (range[0] > -1)
-    {
-        if (range[1] >= MAXSPAWNPOINT)
-            range[1] = MAXSPAWNPOINT-1;
-        for (new j = range[0];j <= range[1];j++)
-        {
-            defSpawnCoords[j][0] += StringToFloat(strCoords[0]);
-            defSpawnCoords[j][1] += StringToFloat(strCoords[1]);
-            defSpawnCoords[j][2] += StringToFloat(strCoords[2]);
-            if (IsValidEntity(spawnEnts[j]))
-                TeleportEntity(spawnEnts[j], defSpawnCoords[j], defSpawnAngles[j], NULL_VECTOR);
         }
         if (range[0] != range[1])
             RespondToCommand(client, "[SM] Moved rewards %d through %d.", range[0], range[1]);
         else
             RespondToCommand(client, "[SM] Moved reward #%d.", range[0]);
+        if (client != 0)
+            autoSave(SAVE_EDIT,true);
     }
-    else
-        RespondToCommand(client, "[SM] Unknown reward '%s'",buffer);
-    if (client != 0)
-        autoSave(SAVE_EDIT,true);
     return Plugin_Handled;
 }
 
@@ -1320,43 +1307,10 @@ public Action:writeCFG(client, args)
                     else
                     {
                         GetCmdArg(++nextArg,buffer,128);
-                        new blen = strlen(buffer);
-                        new dots = StrFind(buffer,"..",0);
-                        new range[2] = { -1, -1 };
-                        switch (dots)
-                        {
-                            case -1:
-                            {
-                                range[0] = range[1] = getRewardID(buffer,client);
-                            }
-                            case 0:
-                            {
-                                if (blen > 2)
-                                {
-                                    range[0] = 0;
-                                    StrErase(buffer,0,2);
-                                    range[1] = StringToInt(buffer);
-                                }
-                            }
-                            default:
-                            {
-                                range[0] = StringToInt(buffer);
-                                if ((dots += 2) < blen)
-                                {
-                                    StrErase(buffer,0,dots);
-                                    range[1] = StringToInt(buffer);
-                                }
-                                else
-                                    range[1] = MAXSPAWNPOINT-1;
-                            }
-                        }
-                        if (range[0] > -1)
-                        {
-                            if (range[1] >= MAXSPAWNPOINT)
-                                range[1] = MAXSPAWNPOINT-1;
+                        decl range[2];
+                        if (!getRewardRange(buffer,range,client))
                             for (new i = range[0];i <= range[1];i++)
                                 rewards[i] = false;
-                        }
                     }
                 }
                 case 'o': // Origin
@@ -1554,43 +1508,10 @@ public Action:loadCFG(client, args)
                     else
                     {
                         GetCmdArg(++nextArg,buffer,64);
-                        new blen = strlen(buffer);
-                        new dots = StrFind(buffer,"..",0);
-                        new range[2] = { -1, -1 };
-                        switch (dots)
-                        {
-                            case -1:
-                            {
-                                range[0] = range[1] = StringToInt(buffer);
-                            }
-                            case 0:
-                            {
-                                if (blen > 2)
-                                {
-                                    range[0] = 0;
-                                    StrErase(buffer,0,2);
-                                    range[1] = StringToInt(buffer);
-                                }
-                            }
-                            default:
-                            {
-                                range[0] = StringToInt(buffer);
-                                if ((dots += 2) < blen)
-                                {
-                                    StrErase(buffer,0,dots);
-                                    range[1] = StringToInt(buffer);
-                                }
-                                else
-                                    range[1] = MAXSPAWNPOINT-1;
-                            }
-                        }
-                        if (range[0] > -1)
-                        {
-                            if (range[1] >= MAXSPAWNPOINT)
-                                range[1] = MAXSPAWNPOINT-1;
+                        decl range[2];
+                        if (!getRewardRange(buffer,range,client))
                             for (new i = range[0];i <= range[1];i++)
                                 rewards[i] = false;
-                        }
                     }
                 }
                 case 'o': // Origin
@@ -3293,18 +3214,72 @@ stock getRewardID(const String:name[], any:client = 0)
         id = getNewestReward();
     else if (StrIsDigit(name) > -1)
         id = StringToInt(name);
-    else
+    else for (new i = 0;i < MAXSPAWNPOINT;i++)
     {
-        for (new i = 0;i < MAXSPAWNPOINT;i++)
+        if (strcmp(entName[i],name) == 0)
         {
-            if (strcmp(entName[i],name) == 0)
-            {
-                id = i;
-                break;
-            }
+            id = i;
+            break;
         }
     }
     return id;
+}
+
+stock getRewardRange(const String:rewards[], any:range[2], any:client = 0)
+{
+    range = { -1, -1 };
+    new blen;
+    new dots;
+    decl String:temp[32];
+    blen = strlen(rewards);
+    switch ((dots = StrFind(rewards,"..")))
+    {
+        case -1:
+        {
+            range[0] = range[1] = getRewardID(rewards,client);
+        }
+        case 0:
+        {
+            if (blen > 2)
+            {
+                range[0] = 0;
+                strcopy(temp,32,rewards);
+                StrErase(temp,0,2);
+                if (StrIsDigit(temp))
+                {
+                    range[0] = 0;
+                    range[1] = StringToInt(temp);
+                }
+                else
+                    range[0] = range[1] = getRewardID(rewards,client);
+            }
+        }
+        default:
+        {
+            if (StrIsDigit(rewards))
+            {
+                range[0] = StringToInt(rewards);
+                if ((dots += 2) < blen)
+                {
+                    strcopy(temp,32,rewards);
+                    StrErase(temp,0,dots);
+                    if (StrIsDigit(temp))
+                        range[1] = StringToInt(temp);
+                    else
+                        range[0] = range[1] = getRewardID(rewards,client);
+                }
+                else
+                    range[1] = MAXSPAWNPOINT-1;
+            }
+        }
+    }
+    if (range[0] > -1)
+    {
+        if (range[1] >= MAXSPAWNPOINT)
+            range[1] = MAXSPAWNPOINT-1;
+        return 0;
+    }
+    return 1;
 }
 
 public Action:removeSpawnPoint(client, args)
@@ -3324,63 +3299,26 @@ public Action:removeSpawnPoint(client, args)
         return Plugin_Handled;
     }
     decl String:buffer[32];
+    new bool:save = false;
     decl range[2];
-    new blen;
-    new dots;
-    new bool:saved = false;
-    if (client > 0)
-        saved = true;
     for (new i = 1;i <= args;i++)
     {
-        range[0] = range[1] = -1;
-        GetCmdArg(i, buffer, sizeof(buffer));
-        blen = strlen(buffer);
-        switch ((dots = StrFind(buffer,"..")))
-        {
-            case -1:
-            {
-                range[0] = range[1] = getRewardID(buffer,client);
-            }
-            case 0:
-            {
-                if (blen > 2)
-                {
-                    range[0] = 0;
-                    StrErase(buffer,0,2);
-                    range[1] = StringToInt(buffer);
-                }
-            }
-            default:
-            {
-                range[0] = StringToInt(buffer);
-                if ((dots += 2) < blen)
-                {
-                    StrErase(buffer,0,dots);
-                    range[1] = StringToInt(buffer);
-                }
-                else
-                    range[1] = MAXSPAWNPOINT-1;
-            }
-        }
-        if (range[0] > -1)
-        {
-            if (range[1] >= MAXSPAWNPOINT)
-                range[1] = MAXSPAWNPOINT-1;
-            for (new j = range[0];j <= range[1];j++)
-                removeReward(j);
-            if (!saved)
-            {
-                autoSave(SAVE_REMOVE,true);
-                saved = true;
-            }
-            if (range[0] != range[1])
-                RespondToCommand(client, "[SM] Removed rewards %d through %d.", range[0], range[1]);
-            else
-                RespondToCommand(client, "[SM] Removed reward #%d.", range[0]);
-        }
-        else
+        GetCmdArg(i,buffer,32);
+        if (getRewardRange(buffer,range,client))
             RespondToCommand(client, "[SM] Unknown reward '%s'",buffer);
+        else
+        {
+            for (new j = range[0];j <= range[1];j++)
+                removeReward(reward);
+            if (range[0] == range[1])
+                RespondToCommand(client, "[SM] Removed reward #%d.",range[0]);
+            else
+                RespondToCommand(client, "[SM] Removed rewards #%d through #%d.",range[0],range[1]);
+            save = true;
+        }
     }
+    if ((client > 0) && (save))
+        autoSave(SAVE_REMOVE,true);
     return Plugin_Handled;
 }
 
@@ -3395,8 +3333,7 @@ public Action:removeSpawnPoints(client, args)
             return Plugin_Handled;
         }
     }
-    for (new i = 0; i < MAXSPAWNPOINT; i++)
-        removeReward(i);
+    removeRewards();
     if (client != 0)
         autoSave(SAVE_REMOVE,true);
     RespondToCommand(client, "[SM] Removed all rewards");
@@ -3421,57 +3358,24 @@ public Action:manuallyRespawnReward(client, args)
     }
     decl String:buffer[32];
     decl range[2];
-    new blen;
-    new dots;
     for (new i = 1;i <= args;i++)
     {
-        range[0] = range[1] = -1;
-        GetCmdArg(i, buffer, sizeof(buffer));
-        blen = strlen(buffer);
-        switch ((dots = StrFind(buffer,"..")))
+        GetCmdArg(i,buffer,32);
+        if (getRewardRange(buffer,range,client))
+            RespondToCommand(client, "[SM] Unknown reward '%s'",buffer);
+        else
         {
-            case -1:
-            {
-                range[0] = range[1] = getRewardID(buffer,client);
-            }
-            case 0:
-            {
-                if (blen > 2)
-                {
-                    range[0] = 0;
-                    StrErase(buffer,0,2);
-                    range[1] = StringToInt(buffer);
-                }
-            }
-            default:
-            {
-                range[0] = StringToInt(buffer);
-                if ((dots += 2) < blen)
-                {
-                    StrErase(buffer,0,dots);
-                    range[1] = StringToInt(buffer);
-                }
-                else
-                    range[1] = MAXSPAWNPOINT-1;
-            }
-        }
-        if (range[0] > -1)
-        {
-            if (range[1] >= MAXSPAWNPOINT)
-                range[1] = MAXSPAWNPOINT-1;
             for (new j = range[0];j <= range[1];j++)
             {
                 killReward(j);
                 respawnMethod[j] &= ~HOOK_DEACTIVE;
                 spawnReward(j);
             }
-            if (range[0] != range[1])
-                RespondToCommand(client, "[SM] Respawned rewards %d through %d.", range[0], range[1]);
+            if (range[0] == range[1])
+                RespondToCommand(client, "[SM] Respawned reward #%d.",range[0]);
             else
-                RespondToCommand(client, "[SM] Respawned reward #%d.", range[0]);
+                RespondToCommand(client, "[SM] Respawned rewards #%d through #%d.",range[0],range[1]);
         }
-        else
-            RespondToCommand(client, "[SM] Unknown reward '%s'",buffer);
     }
     return Plugin_Handled;
 }
