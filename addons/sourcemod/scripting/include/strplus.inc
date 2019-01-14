@@ -5,7 +5,7 @@
 
 // StrPlus - Added String functionality, based loosely off C++ STL strings.
 // Written by nigel (NIGathan)
-// Version 0.004
+// Version 0.005
 
 // Copies a sub string of source to dest starting at pos and extending len
 //   characters.
@@ -56,7 +56,10 @@ stock StrFind(const String:source[], const String:search[], pos = 0)
             if (source[i+j] != search[j])
                 break;
         if (j == schLen)
+        {
             match = true;
+            break;
+        }
     }
     if (match)
         return i;

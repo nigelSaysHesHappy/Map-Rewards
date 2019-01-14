@@ -5,12 +5,13 @@
 #include <colors>
 #include <strplus>
 
-#define VERSION "0.191"
+#define VERSION "0.195"
 
-#define MAXSPAWNPOINT       128
+#define MAXSPAWNPOINT       512
 #define MAXALIASES          128
 #define MAXSCRIPTS          64
 #define MAXINPUT            128
+#define MAXCMDLEN           1024
 
 #define CLEAN_PLUG_END      1
 #define CLEAN_MAP_START     2
@@ -50,6 +51,15 @@ public Plugin:myinfo =
     url = "http://sandvich.justca.me/"
 };
 
+/*    *    *    *    *    *    *    *\
+\*                                  */
+/*               TODO               *\
+\*                                  */
+/*    add sm_mrw_trigger command    *\
+\*                                  */
+/*                                  *\
+\*    *    *    *    *    *    *    */
+
 new Handle:c_enable = INVALID_HANDLE;
 new Handle:c_respawnTime = INVALID_HANDLE;
 new Handle:c_cleanUp = INVALID_HANDLE;
@@ -62,7 +72,7 @@ new Handle:c_extendedFlag = INVALID_HANDLE;
 new Float:defSpawnCoords[MAXSPAWNPOINT][3];
 new Float:defSpawnAngles[MAXSPAWNPOINT][3];
 new spawnEnts[MAXSPAWNPOINT] = { -1, ... };
-new String:rCommand[MAXSPAWNPOINT][2][MAXINPUT];
+new String:rCommand[MAXSPAWNPOINT][2][MAXCMDLEN];
 new String:model[MAXSPAWNPOINT][MAXINPUT];
 new String:aliases[MAXALIASES][5][MAXINPUT];
 new String:scripts[MAXSCRIPTS][2][MAXINPUT];
@@ -78,6 +88,7 @@ new Handle:entTimers[MAXSPAWNPOINT] = { INVALID_HANDLE, ... };
 new rewardKiller[MAXSPAWNPOINT];
 new Float:entHealth[MAXSPAWNPOINT];
 new Float:entDamage[MAXSPAWNPOINT];
+new bool:unEvaluate[MAXSPAWNPOINT];
 new aliasCount = 0;
 new scriptCount = 0;
 new newestReward = -1;
@@ -135,7 +146,6 @@ public OnPluginStart()
     RegAdminCmd("sm_exec2", exec2CFG, ADMFLAG_SLAY, "Executes a cfg file provided as the second argument. Accepts a first argument, but is ignored unless the third argument is '0'. If the third argument is anything else, it will be used instead of the player's name. Any additional arguments will be used instead of the default message.");
     RegAdminCmd("sm_teleplus", teleportCmd, ADMFLAG_SLAY, "Teleport a player to a set of coordinates with optional rotation and velocity. Relative coords, angles, and velocity are allowed.");
     
-    //HookEvent("teamplay_round_active", OnRoundStart, EventHookMode_PostNoCopy);
     HookEvent("teamplay_round_start", OnRoundStart);//, EventHookMode_PostNoCopy);
 
     HookConVarChange(c_enable, cvarEnableChange);
@@ -182,15 +192,15 @@ stock CRespondToCommand(client, const String:msg[], any:...)
 
 stock CPrintToServer(const String:msg[], any:...)
 {
-    decl String:fmsg[1024];
-    VFormat(fmsg,1024,msg,2);
-    ReplaceString(fmsg,1024,"{default}","");
-    ReplaceString(fmsg,1024,"{green}","");
-    ReplaceString(fmsg,1024,"{lightgreen}","");
-    ReplaceString(fmsg,1024,"{red}","");
-    ReplaceString(fmsg,1024,"{blue}","");
-    ReplaceString(fmsg,1024,"{olive}","");
-    ReplaceString(fmsg,1024,"{teamcolor}","");
+    decl String:fmsg[MAXCMDLEN];
+    VFormat(fmsg,MAXCMDLEN,msg,2);
+    ReplaceString(fmsg,MAXCMDLEN,"{default}","");
+    ReplaceString(fmsg,MAXCMDLEN,"{green}","");
+    ReplaceString(fmsg,MAXCMDLEN,"{lightgreen}","");
+    ReplaceString(fmsg,MAXCMDLEN,"{red}","");
+    ReplaceString(fmsg,MAXCMDLEN,"{blue}","");
+    ReplaceString(fmsg,MAXCMDLEN,"{olive}","");
+    ReplaceString(fmsg,MAXCMDLEN,"{teamcolor}","");
     PrintToServer(fmsg);
 }
 
@@ -318,8 +328,8 @@ public Action:exec2CFG(client, args)
     }
     if (args > 1)
     {
-        decl String:cfg[32];
-        GetCmdArg(2,cfg,32);
+        decl String:cfg[MAXINPUT];
+        GetCmdArg(2,cfg,MAXINPUT);
         ServerCommand("exec %s",cfg);
     }
     return Plugin_Handled;
@@ -549,7 +559,8 @@ public Action:copyReward(client, args)
             respawnMethod[spawnPoints] = respawnMethod[tempID];
             respawnTime[spawnPoints] = respawnTime[tempID];
             entSpin[spawnPoints] = entSpin[tempID];
-            entSpinInt[spawnPoints] = entSpinInt[spawnPoints];
+            entSpinInt[spawnPoints] = entSpinInt[tempID];
+            unEvaluate[spawnPoints] = unEvaluate[tempID];
             if (args > 7)
                 GetCmdArg(8,entName[spawnPoints],32);
             else
@@ -652,7 +663,8 @@ public Action:copyRewardHere(client, args)
     respawnMethod[spawnPoints] = respawnMethod[tempID];
     respawnTime[spawnPoints] = respawnTime[tempID];
     entSpin[spawnPoints] = entSpin[tempID];
-    entSpinInt[spawnPoints] = entSpinInt[spawnPoints];
+    entSpinInt[spawnPoints] = entSpinInt[tempID];
+    unEvaluate[spawnPoints] = unEvaluate[tempID];
     if (g_enable)
         spawnReward(spawnPoints);
     if (client != 0)
@@ -678,22 +690,62 @@ public Action:moveReward(client, args)
         return Plugin_Handled;
     }
     decl String:buffer[32];
+    decl String:strCoords[3][16];
+    decl range[2];
+    new blen;
+    new dots;
+    range[0] = range[1] = -1;
     GetCmdArg(1,buffer,32);
-    new tempID = getRewardID(buffer,client);
-    tempID = StringToInt(buffer);
-    if (!isValidReward(tempID))
+    GetCmdArg(2,strCoords[0],16);
+    GetCmdArg(3,strCoords[1],16);
+    GetCmdArg(4,strCoords[2],16);
+    blen = strlen(buffer);
+    switch ((dots = StrFind(buffer,"..")))
     {
-        RespondToCommand(client, "[SM] Error: Unknown reward '%s'",buffer);
-        return Plugin_Handled;
+        case -1:
+        {
+            range[0] = range[1] = getRewardID(buffer,client);
+        }
+        case 0:
+        {
+            if (blen > 2)
+            {
+                range[0] = 0;
+                StrErase(buffer,0,2);
+                range[1] = StringToInt(buffer);
+            }
+        }
+        default:
+        {
+            range[0] = StringToInt(buffer);
+            if ((dots += 2) < blen)
+            {
+                StrErase(buffer,0,dots);
+                range[1] = StringToInt(buffer);
+            }
+            else
+                range[1] = MAXSPAWNPOINT-1;
+        }
     }
-    GetCmdArg(2,buffer,16);
-    defSpawnCoords[tempID][0] += StringToFloat(buffer);
-    GetCmdArg(3,buffer,16);
-    defSpawnCoords[tempID][1] += StringToFloat(buffer);
-    GetCmdArg(4,buffer,16);
-    defSpawnCoords[tempID][2] += StringToFloat(buffer);
-    if (IsValidEntity(spawnEnts[tempID]))
-        TeleportEntity(spawnEnts[tempID], defSpawnCoords[tempID], defSpawnAngles[tempID], NULL_VECTOR);
+    if (range[0] > -1)
+    {
+        if (range[1] >= MAXSPAWNPOINT)
+            range[1] = MAXSPAWNPOINT-1;
+        for (new j = range[0];j <= range[1];j++)
+        {
+            defSpawnCoords[j][0] += StringToFloat(strCoords[0]);
+            defSpawnCoords[j][1] += StringToFloat(strCoords[1]);
+            defSpawnCoords[j][2] += StringToFloat(strCoords[2]);
+            if (IsValidEntity(spawnEnts[j]))
+                TeleportEntity(spawnEnts[j], defSpawnCoords[j], defSpawnAngles[j], NULL_VECTOR);
+        }
+        if (range[0] != range[1])
+            RespondToCommand(client, "[SM] Moved rewards %d through %d.", range[0], range[1]);
+        else
+            RespondToCommand(client, "[SM] Moved reward #%d.", range[0]);
+    }
+    else
+        RespondToCommand(client, "[SM] Unknown reward '%s'",buffer);
     if (client != 0)
         autoSave(SAVE_EDIT,true);
     return Plugin_Handled;
@@ -768,8 +820,6 @@ public Action:tpPlayer(client, args)
         return Plugin_Handled;
     }
     new Float:rCoords[4][3];
-    //rCoords[0] = defSpawnCoords[tempID];
-    //rCoords[1] = defSpawnAngles[tempID];
     if (IsValidEntity(spawnEnts[tempID]))
     {
         GetEntPropVector(spawnEnts[tempID],Prop_Data,"m_vecOrigin",rCoords[0]);
@@ -873,6 +923,8 @@ stock buildRewardCmd(index, String:cmdC[], cmdSize, bool:relative = false, const
         Format(cmdC,cmdSize,"%s -p %s",cmdC,script[index][1]);
     if (entSpinInt[index] > 0.0)
         Format(cmdC,cmdSize,"%s -T %f %f %f %.1f",cmdC,entSpin[index][0],entSpin[index][1],entSpin[index][2],entSpinInt[index]);
+    if (unEvaluate[index])
+        Format(cmdC,cmdSize,"%s -U",cmdC);
     if (respawnMethod[index] != HOOK_NOHOOK)
     {
         Format(cmdC,cmdSize,"%s -d %i",cmdC,(respawnMethod[index] & ~HOOK_DEACTIVE));
@@ -915,8 +967,8 @@ public Action:infoSpawnPoint(client, args)
         RespondToCommand(client, "[SM] Unknown reward '%s'",buffer);
         return Plugin_Handled;
     }
-    decl String:cmdC[1024];
-    buildRewardCmd(tempID,cmdC,1024);
+    decl String:cmdC[MAXCMDLEN];
+    buildRewardCmd(tempID,cmdC,MAXCMDLEN);
     RespondToCommand(client,"[SM] Info on #%d(%d): X=%.1f Y=%.1f Z=%.1f RX=%.1f RY=%.1f RZ=%.1f",tempID,spawnEnts[tempID],defSpawnCoords[tempID][0],defSpawnCoords[tempID][1],defSpawnCoords[tempID][2],defSpawnAngles[tempID][0],defSpawnAngles[tempID][1],defSpawnAngles[tempID][2]);
     RespondToCommand(client,"[SM] Model: %s",model[tempID]);
     if (strlen(rCommand[tempID][0]) > 0)
@@ -1289,9 +1341,9 @@ public Action:writeCFG(client, args)
                             default:
                             {
                                 range[0] = StringToInt(buffer);
-                                if ((dots+1) < blen)
+                                if ((dots += 2) < blen)
                                 {
-                                    StrErase(buffer,0,dots+1);
+                                    StrErase(buffer,0,dots);
                                     range[1] = StringToInt(buffer);
                                 }
                                 else
@@ -1397,7 +1449,7 @@ public Action:writeCFG(client, args)
         RespondToCommand(client,"[SM] Error: Unable to overwrite system file.");
         return Plugin_Handled;
     }
-    Format(buffer,64,"cfg/maprewards/%s",buffer);
+    Format(buffer,128,"cfg/maprewards/%s",buffer);
     if (DirExists("cfg/maprewards") == false)
         CreateDirectory("cfg/maprewards",511);
     if (FileExists(buffer))
@@ -1420,8 +1472,8 @@ public Action:writeCFG(client, args)
     {
         if ((rewards[i]) && (isValidReward(i)))
         {
-            decl String:cmdC[1024];
-            buildRewardCmd(i,cmdC,1024,relative,originC);
+            decl String:cmdC[MAXCMDLEN];
+            buildRewardCmd(i,cmdC,MAXCMDLEN,relative,originC);
             WriteFileLine(oFile,cmdC);
             lines++;
         }
@@ -1453,6 +1505,7 @@ RespondLoadUsage(client)
     CRespondToCommand(client,"[SM]          May be used in conjunction with {green}-o{default} to offset from a player as long as {green}-O{default} is provided first.");
     CRespondToCommand(client,"[SM]       -D <{green}#reward_id|name{default}>");
     CRespondToCommand(client,"[SM]          Set the origin coordinates to a reward's location.");
+    CRespondToCommand(client,"[SM]       -N   Not relative. Does not set the origin coordinates, useful for cfg's that have dangerously long commands.");
 }
 
 public Action:loadCFG(client, args)
@@ -1471,7 +1524,7 @@ public Action:loadCFG(client, args)
         RespondLoadUsage(client);
         return Plugin_Handled;
     }
-    decl String:buffer[64];
+    decl String:buffer[128];
     new Float:originC[3];
     if ((client > 0) && (IsClientInGame(client)))
         GetClientAbsOrigin(client,originC);
@@ -1479,11 +1532,12 @@ public Action:loadCFG(client, args)
     new nextArg = 1;
     new bool:lastArg = false;
     new bool:rewards[MAXSPAWNPOINT] = { true, ... };
+    new bool:notRelative = false;
     for (;nextArg <= args;nextArg++)
     {
         if (nextArg == args)
             lastArg = true;
-        GetCmdArg(nextArg,buffer,64);
+        GetCmdArg(nextArg,buffer,128);
         if (buffer[0] == '-')
         {
             if (buffer[1] == '-')
@@ -1521,9 +1575,9 @@ public Action:loadCFG(client, args)
                             default:
                             {
                                 range[0] = StringToInt(buffer);
-                                if ((dots+1) < blen)
+                                if ((dots += 2) < blen)
                                 {
-                                    StrErase(buffer,0,dots+1);
+                                    StrErase(buffer,0,dots);
                                     range[1] = StringToInt(buffer);
                                 }
                                 else
@@ -1567,7 +1621,7 @@ public Action:loadCFG(client, args)
                         err = true;
                     else
                     {
-                        GetCmdArg(++nextArg,buffer,64);
+                        GetCmdArg(++nextArg,buffer,128);
                         decl String:target_name[MAX_NAME_LENGTH];
                         decl target_list[1];
                         decl target_count;
@@ -1596,6 +1650,10 @@ public Action:loadCFG(client, args)
                         originC = defSpawnCoords[base];
                     }
                 }
+                case 'N': // Not relative
+                {
+                    notRelative = true;
+                }
                 default:
                 {
                     RespondToCommand(client,"[SM] Ignoring unknown switch: %s",buffer);
@@ -1612,7 +1670,7 @@ public Action:loadCFG(client, args)
         RespondLoadUsage(client);
         return Plugin_Handled;
     }
-    GetCmdArg(nextArg, buffer, 48);
+    GetCmdArg(nextArg, buffer, 112);
     while ((buffer[0] == '/') || (buffer[0] == '\\'))
         StrErase(buffer,0);
     if (StrFind(buffer,"..") > -1)
@@ -1625,7 +1683,7 @@ public Action:loadCFG(client, args)
         RespondToCommand(client,"[SM] Error: Unable to load system file.");
         return Plugin_Handled;
     }
-    Format(buffer,64,"cfg/maprewards/%s",buffer);
+    Format(buffer,128,"cfg/maprewards/%s",buffer);
     if (!FileExists(buffer))
     {
         CRespondToCommand(client,"[SM] Error: File {green}%s{default} does not exist.",buffer);
@@ -1633,11 +1691,12 @@ public Action:loadCFG(client, args)
     }
     cleanUp(CLEAN_MAN_LOAD);
     new Handle:iFile = OpenFile(buffer,"r");
-    decl String:fBuf[1024];
+    decl String:fBuf[MAXCMDLEN];
     new lines, skipped;
     decl String:rep[MAXINPUT];
-    Format(rep,MAXINPUT,"sm_mrw_add -o %f %f %f ",originC[0],originC[1],originC[2]);
-    while (ReadFileLine(iFile,fBuf,1024))
+    if (!notRelative)
+        Format(rep,MAXINPUT,"sm_mrw_add -o %f %f %f ",originC[0],originC[1],originC[2]);
+    while (ReadFileLine(iFile,fBuf,MAXCMDLEN))
     {
         TrimString(fBuf);
         if (strlen(fBuf) == 0)
@@ -1646,7 +1705,9 @@ public Action:loadCFG(client, args)
         {
             if (rewards[lines++])
             {
-                ReplaceStringEx(fBuf,1024,"sm_mrw_add ",rep);
+                if (!notRelative)
+                    ReplaceStringEx(fBuf,MAXCMDLEN,"sm_mrw_add ",rep);
+                //PrintToServer("#%d... %s",lines-1,fBuf);
                 ServerCommand(fBuf);
             }
             else
@@ -1853,6 +1914,7 @@ resetReward(index)
     rewardKiller[index] = 0;
     entHealth[index] = 0.0;
     entDamage[index] = 0.0;
+    unEvaluate[index] = false;
 }
 
 resetRewards()
@@ -1956,8 +2018,8 @@ stock bool:autoSave(event, bool:force = false)
                 {
                     if (strlen(entType[i]) != 0)
                     {
-                        decl String:cmdC[1024];
-                        buildRewardCmd(i,cmdC,1024);
+                        decl String:cmdC[MAXCMDLEN];
+                        buildRewardCmd(i,cmdC,MAXCMDLEN);
                         WriteFileLine(oFile,cmdC);
                     }
                 }
@@ -2061,6 +2123,7 @@ stock RespondUsage(client)
     CRespondToCommand(client, "[SM]       -T <{green}SX SY SZ interval{default}>");
     CRespondToCommand(client, "[SM]          Set the reward to rotate every {green}interval{default}.");
     CRespondToCommand(client, "[SM]          {green}interval{default} is in fractional seconds.");
+    CRespondToCommand(client, "[SM]       -U   {green}model{default}, {green}script{default}, and {green}entity_property{default} aliases will not be evaluated until spawn time.");
     CRespondToCommand(client, "[SM]       -X   Sets the command for when the reward is {green}kill{default}ed to {green}command{default}.");
     CRespondToCommand(client, "[SM]               To set both {green}pickup{default} and {green}kill{default} commands requires an extra call to {green}sm_mrw_modify{default}.");
     CRespondToCommand(client, "[SM]               If {green}respawn_method{default} is set to {green}kill{default} and {green}-X{default} is not present, {green}command{default} will be used for both {green}pickup{default} and {green}kill{default}.");
@@ -2099,7 +2162,7 @@ public Action:addSpawnPoint(client, args)
     entType[spawnPoints] = "prop_physics_override";
     IntToString(spawnPoints,entName[spawnPoints],32);
     
-    decl String:buffer[128];
+    decl String:buffer[MAXINPUT];
     new nextArg = 1;
     new bool:lastArg = false;
     new bool:err = false;
@@ -2114,7 +2177,7 @@ public Action:addSpawnPoint(client, args)
     {
         if (nextArg == args)
             lastArg = true;
-        GetCmdArg(nextArg,buffer,64);
+        GetCmdArg(nextArg,buffer,MAXINPUT);
         if (buffer[0] == '-')
         {
             if (buffer[1] == '-')
@@ -2124,6 +2187,12 @@ public Action:addSpawnPoint(client, args)
             }
             switch (buffer[1])
             {
+                //Unused:                   aBEfFgGiIjJklLMqQuUvVwWxyYzZ
+                //Used by another command:    Ef
+                case 'U': // don't evalUate aliases until spawn time
+                {
+                    unEvaluate[spawnPoints] = true;
+                }
                 case 'P': // Shortcut for -d pickup
                 {
                     respawnMethod[spawnPoints] &= ~HOOK_STATIC;
@@ -2158,7 +2227,7 @@ public Action:addSpawnPoint(client, args)
                         err = true;
                     else
                     {
-                        GetCmdArg(++nextArg,buffer,64);
+                        GetCmdArg(++nextArg,buffer,MAXINPUT);
                         if (!StrIsDigit(buffer))
                             err = true;
                         else
@@ -2171,7 +2240,7 @@ public Action:addSpawnPoint(client, args)
                         err = true;
                     else
                     {
-                        GetCmdArg(++nextArg,buffer,64);
+                        GetCmdArg(++nextArg,buffer,MAXINPUT);
                         new base = getRewardID(buffer);
                         if (!isValidReward(base))
                         {
@@ -2179,6 +2248,7 @@ public Action:addSpawnPoint(client, args)
                             RespondToCommand(client, "[SM] Error: Unknown reward '%s'",buffer);
                             return Plugin_Handled;
                         }
+                        unEvaluate[spawnPoints] = unEvaluate[base];
                         defSpawnCoords[spawnPoints] = defSpawnCoords[base];
                         defSpawnAngles[spawnPoints] = defSpawnAngles[base];
                         respawnMethod[spawnPoints] = respawnMethod[base];
@@ -2189,6 +2259,8 @@ public Action:addSpawnPoint(client, args)
                         script[spawnPoints][0] = script[base][0];
                         script[spawnPoints][1] = script[base][1]
                         respawnTime[spawnPoints] = respawnTime[base];
+                        entSpin[spawnPoints] = entSpin[base];
+                        entSpinInt[spawnPoints] = entSpinInt[base];
                     }
                 }
                 case 'c': // Coords
@@ -2197,7 +2269,7 @@ public Action:addSpawnPoint(client, args)
                         err = true;
                     else
                     {
-                        GetCmdArg(nextArg+1,buffer,64);
+                        GetCmdArg(nextArg+1,buffer,MAXINPUT);
                         if (strcmp(buffer,"@aim") == 0)
                         {
                             nextArg++;
@@ -2219,7 +2291,7 @@ public Action:addSpawnPoint(client, args)
                         err = true;
                     else
                     {
-                        GetCmdArg(++nextArg,buffer,64);
+                        GetCmdArg(++nextArg,buffer,MAXINPUT);
                         if (strcmp(buffer,"pickup") == 0)
                             respawnMethod[spawnPoints] = HOOK_TOUCH;
                         else if (strcmp(buffer,"static") == 0)
@@ -2244,22 +2316,25 @@ public Action:addSpawnPoint(client, args)
                         err = true;
                     else
                     {
-                        GetCmdArg(++nextArg,buffer,64);
-                        for (new i = 0;i < aliasCount;i++)
+                        GetCmdArg(++nextArg,buffer,MAXINPUT);
+                        if (!unEvaluate[spawnPoints])
                         {
-                            if (strcmp(buffer,aliases[i][0]) == 0)
+                            for (new i = 0;i < aliasCount;i++)
                             {
-                                strcopy(buffer,64,aliases[i][2]);
-                                if ((strlen(aliases[i][1]) > 0) && (strcmp(model[spawnPoints],"null") != 0) && (strcmp(model[spawnPoints],"0") != 0))
-                                    strcopy(model[spawnPoints],64,aliases[i][1]);
-                                if ((strlen(aliases[i][3]) > 0) && (strcmp(script[spawnPoints][0],"null") != 0) && (strcmp(script[spawnPoints][0],"0") != 0))
-                                    strcopy(script[spawnPoints][0],64,aliases[i][3]);
-                                if ((strlen(aliases[i][4]) > 0) && (strcmp(script[spawnPoints][1],"null") != 0) && (strcmp(script[spawnPoints][1],"0") != 0))
-                                    strcopy(script[spawnPoints][1],64,aliases[i][4]);
-                                break;
+                                if (strcmp(buffer,aliases[i][0]) == 0)
+                                {
+                                    strcopy(buffer,MAXINPUT,aliases[i][2]);
+                                    if ((strlen(aliases[i][1]) > 0) && (strcmp(model[spawnPoints],"null") != 0) && (strcmp(model[spawnPoints],"0") != 0))
+                                        strcopy(model[spawnPoints],MAXINPUT,aliases[i][1]);
+                                    if ((strlen(aliases[i][3]) > 0) && (strcmp(script[spawnPoints][0],"null") != 0) && (strcmp(script[spawnPoints][0],"0") != 0))
+                                        strcopy(script[spawnPoints][0],MAXINPUT,aliases[i][3]);
+                                    if ((strlen(aliases[i][4]) > 0) && (strcmp(script[spawnPoints][1],"null") != 0) && (strcmp(script[spawnPoints][1],"0") != 0))
+                                        strcopy(script[spawnPoints][1],MAXINPUT,aliases[i][4]);
+                                    break;
+                                }
                             }
                         }
-                        strcopy(entType[spawnPoints],32,buffer);
+                        strcopy(entType[spawnPoints],64,buffer);
                     }
                 }
                 case 'h': // Help
@@ -2274,22 +2349,25 @@ public Action:addSpawnPoint(client, args)
                         err = true;
                     else
                     {
-                        GetCmdArg(++nextArg,buffer,64);
-                        for (new i = 0;i < aliasCount;i++)
+                        GetCmdArg(++nextArg,buffer,MAXINPUT);
+                        if (!unEvaluate[spawnPoints])
                         {
-                            if (strcmp(buffer,aliases[i][0]) == 0)
+                            for (new i = 0;i < aliasCount;i++)
                             {
-                                strcopy(buffer,64,aliases[i][1]);
-                                if ((strlen(aliases[i][2]) > 0) && (strcmp(entType[spawnPoints],"null") != 0) && (strcmp(entType[spawnPoints],"0") != 0))
-                                    strcopy(entType[spawnPoints],64,aliases[i][2]);
-                                if ((strlen(aliases[i][2]) > 0) && (strcmp(script[spawnPoints][0],"null") != 0))
-                                    strcopy(script[spawnPoints][0],64,aliases[i][2]);
-                                if ((strlen(aliases[i][4]) > 0) && (strcmp(script[spawnPoints][1],"null") != 0) && (strcmp(script[spawnPoints][1],"0") != 0))
-                                    strcopy(script[spawnPoints][1],64,aliases[i][4]);
-                                break;
+                                if (strcmp(buffer,aliases[i][0]) == 0)
+                                {
+                                    strcopy(buffer,MAXINPUT,aliases[i][1]);
+                                    if ((strlen(aliases[i][2]) > 0) && (strcmp(entType[spawnPoints],"null") != 0) && (strcmp(entType[spawnPoints],"0") != 0))
+                                        strcopy(entType[spawnPoints],MAXINPUT,aliases[i][2]);
+                                    if ((strlen(aliases[i][2]) > 0) && (strcmp(script[spawnPoints][0],"null") != 0))
+                                        strcopy(script[spawnPoints][0],MAXINPUT,aliases[i][2]);
+                                    if ((strlen(aliases[i][4]) > 0) && (strcmp(script[spawnPoints][1],"null") != 0) && (strcmp(script[spawnPoints][1],"0") != 0))
+                                        strcopy(script[spawnPoints][1],MAXINPUT,aliases[i][4]);
+                                    break;
+                                }
                             }
                         }
-                        strcopy(model[spawnPoints],64,buffer);
+                        strcopy(model[spawnPoints],MAXINPUT,buffer);
                     }
                 }
                 case 'n': // Name
@@ -2314,7 +2392,7 @@ public Action:addSpawnPoint(client, args)
                         err = true;
                     else
                     {
-                        GetCmdArg(nextArg+1,buffer,64);
+                        GetCmdArg(nextArg+1,buffer,MAXINPUT);
                         if (strcmp(buffer,"@aim") == 0)
                         {
                             nextArg++;
@@ -2348,7 +2426,7 @@ public Action:addSpawnPoint(client, args)
                         err = true;
                     else
                     {
-                        GetCmdArg(++nextArg,buffer,64);
+                        GetCmdArg(++nextArg,buffer,MAXINPUT);
                         decl String:target_name[MAX_NAME_LENGTH];
                         decl target_list[1];
                         decl target_count;
@@ -2368,7 +2446,7 @@ public Action:addSpawnPoint(client, args)
                         err = true;
                     else
                     {
-                        GetCmdArg(++nextArg,buffer,64);
+                        GetCmdArg(++nextArg,buffer,MAXINPUT);
                         new base = getRewardID(buffer);
                         if (!isValidReward(base))
                         {
@@ -2385,16 +2463,19 @@ public Action:addSpawnPoint(client, args)
                         err = true;
                     else
                     {
-                        GetCmdArg(++nextArg,buffer,64);
-                        for (new i = 0;i < scriptCount;i++)
+                        GetCmdArg(++nextArg,buffer,MAXINPUT);
+                        if (!unEvaluate[spawnPoints])
                         {
-                            if (strcmp(buffer,scripts[i][0]) == 0)
+                            for (new i = 0;i < scriptCount;i++)
                             {
-                                strcopy(buffer,64,scripts[i][1]);
-                                break;
+                                if (strcmp(buffer,scripts[i][0]) == 0)
+                                {
+                                    strcopy(buffer,MAXINPUT,scripts[i][1]);
+                                    break;
+                                }
                             }
                         }
-                        strcopy(script[spawnPoints][1],64,buffer);
+                        strcopy(script[spawnPoints][1],MAXINPUT,buffer);
                     }
                 }
                 case 'r': // Rotation angles
@@ -2405,7 +2486,7 @@ public Action:addSpawnPoint(client, args)
                     {
                         for (new i = 0;i < 3;i++)
                         {
-                            GetCmdArg(++nextArg,buffer,64);
+                            GetCmdArg(++nextArg,buffer,MAXINPUT);
                             defSpawnAngles[spawnPoints][i] = StringToFloat(buffer);
                         }
                     }
@@ -2416,16 +2497,19 @@ public Action:addSpawnPoint(client, args)
                         err = true;
                     else
                     {
-                        GetCmdArg(++nextArg,buffer,64);
-                        for (new i = 0;i < scriptCount;i++)
+                        GetCmdArg(++nextArg,buffer,MAXINPUT);
+                        if (!unEvaluate[spawnPoints])
                         {
-                            if (strcmp(buffer,scripts[i][0]) == 0)
+                            for (new i = 0;i < scriptCount;i++)
                             {
-                                strcopy(buffer,64,scripts[i][1]);
-                                break;
+                                if (strcmp(buffer,scripts[i][0]) == 0)
+                                {
+                                    strcopy(buffer,MAXINPUT,scripts[i][1]);
+                                    break;
+                                }
                             }
                         }
-                        strcopy(script[spawnPoints][0],64,buffer);
+                        strcopy(script[spawnPoints][0],MAXINPUT,buffer);
                     }
                 }
                 case 't': // respawn Time
@@ -2434,7 +2518,7 @@ public Action:addSpawnPoint(client, args)
                         err = true;
                     else
                     {
-                        GetCmdArg(++nextArg,buffer,64);
+                        GetCmdArg(++nextArg,buffer,MAXINPUT);
                         respawnTime[spawnPoints] = StringToFloat(buffer);
                     }
                 }
@@ -2450,10 +2534,10 @@ public Action:addSpawnPoint(client, args)
                     {
                         for (new i = 0;i < 3;i++)
                         {
-                            GetCmdArg(++nextArg,buffer,64);
+                            GetCmdArg(++nextArg,buffer,MAXINPUT);
                             entSpin[spawnPoints][i] = StringToFloat(buffer);
                         }
-                        GetCmdArg(++nextArg,buffer,64);
+                        GetCmdArg(++nextArg,buffer,MAXINPUT);
                         entSpinInt[spawnPoints] = StringToFloat(buffer);
                     }
                 }
@@ -2472,10 +2556,17 @@ public Action:addSpawnPoint(client, args)
         if (err)
             break;
     }
-    if ((strcmp(model[spawnPoints],"null") == 0) || (strcmp(model[spawnPoints],"0") == 0))
-        model[spawnPoints] = "";
-    if ((strcmp(entType[spawnPoints],"null") == 0) || (strcmp(entType[spawnPoints],"0") == 0))
-        entType[spawnPoints] = "prop_physics_override";
+    if (!unEvaluate[spawnPoints])
+    {
+        if ((strcmp(model[spawnPoints],"null") == 0) || (strcmp(model[spawnPoints],"0") == 0))
+            model[spawnPoints] = "";
+        if ((strcmp(entType[spawnPoints],"null") == 0) || (strcmp(entType[spawnPoints],"0") == 0))
+            entType[spawnPoints] = "prop_physics_override";
+        if ((strcmp(script[spawnPoints][0],"null") == 0) || (strcmp(script[spawnPoints][0],"0") == 0))
+            script[spawnPoints][0] = "";
+        if ((strcmp(script[spawnPoints][1],"null") == 0) || (strcmp(script[spawnPoints][1],"0") == 0))
+            script[spawnPoints][1] = "";
+    }
     if ((err) || ((strcmp(entType[spawnPoints],"prop_physics_override") == 0) && (strlen(model[spawnPoints]) < 1)))
     {
         resetReward(spawnPoints);
@@ -2499,17 +2590,14 @@ public Action:addSpawnPoint(client, args)
                 defSpawnCoords[spawnPoints][i] = StringToFloat(strCoords[i]);
         }
     }
-    if ((strcmp(script[spawnPoints][0],"null") == 0) || (strcmp(script[spawnPoints][0],"0") == 0))
-        script[spawnPoints][0] = "";
-    if ((strcmp(script[spawnPoints][1],"null") == 0) || (strcmp(script[spawnPoints][1],"0") == 0))
-        script[spawnPoints][1] = "";
     if (nextArg <= args)
     {
-        GetCmdArg(nextArg++,rCommand[spawnPoints][whichCommand],128);
+        GetCmdArg(nextArg++,rCommand[spawnPoints][whichCommand],MAXCMDLEN);
+        decl String:cBuf[MAXCMDLEN];
         for (;nextArg <= args;nextArg++)
         {
-            GetCmdArg(nextArg,buffer,128);
-            Format(rCommand[spawnPoints][whichCommand],128,"%s %s",rCommand[spawnPoints][whichCommand],buffer);
+            GetCmdArg(nextArg,cBuf,MAXCMDLEN);
+            Format(rCommand[spawnPoints][whichCommand],MAXCMDLEN,"%s %s",rCommand[spawnPoints][whichCommand],cBuf);
         }
     }
     if (g_enable)
@@ -2709,8 +2797,8 @@ public Action:modifySpawnPoint(client, args)
         RespondModifyUsage(client);
         return Plugin_Handled;
     }
-    decl String:buffer[128];
-    GetCmdArg(1,buffer,128);
+    decl String:buffer[MAXINPUT];
+    GetCmdArg(1,buffer,MAXINPUT);
     new spawnPoints = getRewardID(buffer,client);
     if (spawnPoints < 0)
     {
@@ -2726,10 +2814,10 @@ public Action:modifySpawnPoint(client, args)
     new bool:release = false;
     new whichCommand = 0;
     
-    decl String:originalType[32];
-    decl String:originalModel[64];
-    strcopy(originalType,32,entType[spawnPoints]);
-    strcopy(originalModel,64,model[spawnPoints]);
+    decl String:originalType[64];
+    decl String:originalModel[MAXINPUT];
+    strcopy(originalType,64,entType[spawnPoints]);
+    strcopy(originalModel,MAXINPUT,model[spawnPoints]);
     
     new String:strCoords[3][16];
     
@@ -2737,7 +2825,7 @@ public Action:modifySpawnPoint(client, args)
     {
         if (nextArg == args)
             lastArg = true;
-        GetCmdArg(nextArg,buffer,64);
+        GetCmdArg(nextArg,buffer,MAXINPUT);
         if (buffer[0] == '-')
         {
             if (buffer[1] == '-')
@@ -2747,6 +2835,10 @@ public Action:modifySpawnPoint(client, args)
             }
             switch (buffer[1])
             {
+                case 'U': // don't evalUate aliases until spawn time
+                {
+                    unEvaluate[spawnPoints] = true;
+                }
                 case 'P': // Shortcut for -d pickup
                 {
                     respawnMethod[spawnPoints] &= ~HOOK_STATIC;
@@ -2781,7 +2873,7 @@ public Action:modifySpawnPoint(client, args)
                         err = true;
                     else
                     {
-                        GetCmdArg(++nextArg,buffer,64);
+                        GetCmdArg(++nextArg,buffer,MAXINPUT);
                         if (!StrIsDigit(buffer))
                             err = true;
                         else
@@ -2794,7 +2886,7 @@ public Action:modifySpawnPoint(client, args)
                         err = true;
                     else
                     {
-                        GetCmdArg(++nextArg,buffer,64);
+                        GetCmdArg(++nextArg,buffer,MAXINPUT);
                         new base = getRewardID(buffer,client);
                         if (!isValidReward(base))
                         {
@@ -2812,6 +2904,8 @@ public Action:modifySpawnPoint(client, args)
                         script[spawnPoints][0] = script[base][0];
                         script[spawnPoints][1] = script[base][1]
                         respawnTime[spawnPoints] = respawnTime[base];
+                        entSpin[spawnPoints] = entSpin[base];
+                        entSpinInt[spawnPoints] = entSpinInt[base];
                     }
                 }
                 case 'c': // Coords
@@ -2820,7 +2914,7 @@ public Action:modifySpawnPoint(client, args)
                         err = true;
                     else
                     {
-                        GetCmdArg(nextArg+1,buffer,64);
+                        GetCmdArg(nextArg+1,buffer,MAXINPUT);
                         if (strcmp(buffer,"@aim") == 0)
                         {
                             nextArg++;
@@ -2842,7 +2936,7 @@ public Action:modifySpawnPoint(client, args)
                         err = true;
                     else
                     {
-                        GetCmdArg(++nextArg,buffer,64);
+                        GetCmdArg(++nextArg,buffer,MAXINPUT);
                         if (strcmp(buffer,"pickup") == 0)
                             respawnMethod[spawnPoints] = HOOK_TOUCH;
                         else if (strcmp(buffer,"static") == 0)
@@ -2867,22 +2961,25 @@ public Action:modifySpawnPoint(client, args)
                         err = true;
                     else
                     {
-                        GetCmdArg(++nextArg,buffer,64);
-                        for (new i = 0;i < aliasCount;i++)
+                        GetCmdArg(++nextArg,buffer,MAXINPUT);
+                        if (!unEvaluate[spawnPoints])
                         {
-                            if (strcmp(buffer,aliases[i][0]) == 0)
+                            for (new i = 0;i < aliasCount;i++)
                             {
-                                strcopy(buffer,64,aliases[i][2]);
-                                if ((strlen(aliases[i][1]) > 0) && (strcmp(model[spawnPoints],"null") != 0) && (strcmp(model[spawnPoints],"0") != 0))
-                                    strcopy(model[spawnPoints],64,aliases[i][1]);
-                                if ((strlen(aliases[i][3]) > 0) && (strcmp(script[spawnPoints][0],"null") != 0) && (strcmp(script[spawnPoints][0],"0") != 0))
-                                    strcopy(script[spawnPoints][0],64,aliases[i][3]);
-                                if ((strlen(aliases[i][4]) > 0) && (strcmp(script[spawnPoints][1],"null") != 0) && (strcmp(script[spawnPoints][1],"0") != 0))
-                                    strcopy(script[spawnPoints][1],64,aliases[i][4]);
-                                break;
+                                if (strcmp(buffer,aliases[i][0]) == 0)
+                                {
+                                    strcopy(buffer,MAXINPUT,aliases[i][2]);
+                                    if ((strlen(aliases[i][1]) > 0) && (strcmp(model[spawnPoints],"null") != 0) && (strcmp(model[spawnPoints],"0") != 0))
+                                        strcopy(model[spawnPoints],MAXINPUT,aliases[i][1]);
+                                    if ((strlen(aliases[i][3]) > 0) && (strcmp(script[spawnPoints][0],"null") != 0) && (strcmp(script[spawnPoints][0],"0") != 0))
+                                        strcopy(script[spawnPoints][0],MAXINPUT,aliases[i][3]);
+                                    if ((strlen(aliases[i][4]) > 0) && (strcmp(script[spawnPoints][1],"null") != 0) && (strcmp(script[spawnPoints][1],"0") != 0))
+                                        strcopy(script[spawnPoints][1],MAXINPUT,aliases[i][4]);
+                                    break;
+                                }
                             }
                         }
-                        strcopy(entType[spawnPoints],32,buffer);
+                        strcopy(entType[spawnPoints],64,buffer);
                     }
                 }
                 case 'm': // Model
@@ -2891,22 +2988,25 @@ public Action:modifySpawnPoint(client, args)
                         err = true;
                     else
                     {
-                        GetCmdArg(++nextArg,buffer,64);
-                        for (new i = 0;i < aliasCount;i++)
+                        GetCmdArg(++nextArg,buffer,MAXINPUT);
+                        if (!unEvaluate[spawnPoints])
                         {
-                            if (strcmp(buffer,aliases[i][0]) == 0)
+                            for (new i = 0;i < aliasCount;i++)
                             {
-                                strcopy(buffer,64,aliases[i][1]);
-                                if ((strlen(aliases[i][2]) > 0) && (strcmp(entType[spawnPoints],"null") != 0) && (strcmp(entType[spawnPoints],"0") != 0))
-                                    strcopy(entType[spawnPoints],64,aliases[i][2]);
-                                if ((strlen(aliases[i][2]) > 0) && (strcmp(script[spawnPoints][0],"null") != 0))
-                                    strcopy(script[spawnPoints][0],64,aliases[i][2]);
-                                if ((strlen(aliases[i][4]) > 0) && (strcmp(script[spawnPoints][1],"null") != 0) && (strcmp(script[spawnPoints][1],"0") != 0))
-                                    strcopy(script[spawnPoints][1],64,aliases[i][4]);
-                                break;
+                                if (strcmp(buffer,aliases[i][0]) == 0)
+                                {
+                                    strcopy(buffer,MAXINPUT,aliases[i][1]);
+                                    if ((strlen(aliases[i][2]) > 0) && (strcmp(entType[spawnPoints],"null") != 0) && (strcmp(entType[spawnPoints],"0") != 0))
+                                        strcopy(entType[spawnPoints],MAXINPUT,aliases[i][2]);
+                                    if ((strlen(aliases[i][2]) > 0) && (strcmp(script[spawnPoints][0],"null") != 0))
+                                        strcopy(script[spawnPoints][0],MAXINPUT,aliases[i][2]);
+                                    if ((strlen(aliases[i][4]) > 0) && (strcmp(script[spawnPoints][1],"null") != 0) && (strcmp(script[spawnPoints][1],"0") != 0))
+                                        strcopy(script[spawnPoints][1],MAXINPUT,aliases[i][4]);
+                                    break;
+                                }
                             }
                         }
-                        strcopy(model[spawnPoints],64,buffer);
+                        strcopy(model[spawnPoints],MAXINPUT,buffer);
                     }
                 }
                 case 'n': // Name
@@ -2930,7 +3030,7 @@ public Action:modifySpawnPoint(client, args)
                         err = true;
                     else
                     {
-                        GetCmdArg(nextArg+1,buffer,64);
+                        GetCmdArg(nextArg+1,buffer,MAXINPUT);
                         if (strcmp(buffer,"@aim") == 0)
                         {
                             nextArg++;
@@ -2964,7 +3064,7 @@ public Action:modifySpawnPoint(client, args)
                         err = true;
                     else
                     {
-                        GetCmdArg(++nextArg,buffer,64);
+                        GetCmdArg(++nextArg,buffer,MAXINPUT);
                         decl String:target_name[MAX_NAME_LENGTH];
                         decl target_list[1];
                         decl bool:tn_is_ml;
@@ -2980,7 +3080,7 @@ public Action:modifySpawnPoint(client, args)
                         err = true;
                     else
                     {
-                        GetCmdArg(++nextArg,buffer,64);
+                        GetCmdArg(++nextArg,buffer,MAXINPUT);
                         new base = getRewardID(buffer,client);
                         if (!isValidReward(base))
                             RespondToCommand(client, "[SM] Error: Unknown reward '%s', not changing origin.",buffer);
@@ -2994,16 +3094,19 @@ public Action:modifySpawnPoint(client, args)
                         err = true;
                     else
                     {
-                        GetCmdArg(++nextArg,buffer,64);
-                        for (new i = 0;i < scriptCount;i++)
+                        GetCmdArg(++nextArg,buffer,MAXINPUT);
+                        if (!unEvaluate[spawnPoints])
                         {
-                            if (strcmp(buffer,scripts[i][0]) == 0)
+                            for (new i = 0;i < scriptCount;i++)
                             {
-                                strcopy(buffer,64,scripts[i][1]);
-                                break;
+                                if (strcmp(buffer,scripts[i][0]) == 0)
+                                {
+                                    strcopy(buffer,MAXINPUT,scripts[i][1]);
+                                    break;
+                                }
                             }
                         }
-                        strcopy(script[spawnPoints][1],64,buffer);
+                        strcopy(script[spawnPoints][1],MAXINPUT,buffer);
                     }
                 }
                 case 'r': // Rotation angles
@@ -3014,7 +3117,7 @@ public Action:modifySpawnPoint(client, args)
                     {
                         for (new i = 0;i < 3;i++)
                         {
-                            GetCmdArg(++nextArg,buffer,64);
+                            GetCmdArg(++nextArg,buffer,MAXINPUT);
                             if (buffer[0] == '~')
                             {
                                 if (strlen(buffer) > 1)
@@ -3034,16 +3137,19 @@ public Action:modifySpawnPoint(client, args)
                         err = true;
                     else
                     {
-                        GetCmdArg(++nextArg,buffer,64);
-                        for (new i = 0;i < scriptCount;i++)
+                        GetCmdArg(++nextArg,buffer,MAXINPUT);
+                        if (!unEvaluate[spawnPoints])
                         {
-                            if (strcmp(buffer,scripts[i][0]) == 0)
+                            for (new i = 0;i < scriptCount;i++)
                             {
-                                strcopy(buffer,64,scripts[i][1]);
-                                break;
+                                if (strcmp(buffer,scripts[i][0]) == 0)
+                                {
+                                    strcopy(buffer,MAXINPUT,scripts[i][1]);
+                                    break;
+                                }
                             }
                         }
-                        strcopy(script[spawnPoints][0],64,buffer);
+                        strcopy(script[spawnPoints][0],MAXINPUT,buffer);
                     }
                 }
                 case 't': // respawn Time
@@ -3052,7 +3158,7 @@ public Action:modifySpawnPoint(client, args)
                         err = true;
                     else
                     {
-                        GetCmdArg(++nextArg,buffer,64);
+                        GetCmdArg(++nextArg,buffer,MAXINPUT);
                         respawnTime[spawnPoints] = StringToFloat(buffer);
                     }
                 }
@@ -3068,10 +3174,10 @@ public Action:modifySpawnPoint(client, args)
                     {
                         for (new i = 0;i < 3;i++)
                         {
-                            GetCmdArg(++nextArg,buffer,64);
+                            GetCmdArg(++nextArg,buffer,MAXINPUT);
                             entSpin[spawnPoints][i] = StringToFloat(buffer);
                         }
-                        GetCmdArg(++nextArg,buffer,64);
+                        GetCmdArg(++nextArg,buffer,MAXINPUT);
                         entSpinInt[spawnPoints] = StringToFloat(buffer);
                     }
                 }
@@ -3090,10 +3196,17 @@ public Action:modifySpawnPoint(client, args)
         if (err)
             break;
     }
-    if ((strcmp(model[spawnPoints],"null") == 0) || (strcmp(model[spawnPoints],"0") == 0))
-        model[spawnPoints] = "";
-    if ((strcmp(entType[spawnPoints],"null") == 0) || (strcmp(entType[spawnPoints],"0") == 0))
-        entType[spawnPoints] = "prop_physics_override";
+    if (!unEvaluate[spawnPoints])
+    {
+        if ((strcmp(model[spawnPoints],"null") == 0) || (strcmp(model[spawnPoints],"0") == 0))
+            model[spawnPoints] = "";
+        if ((strcmp(entType[spawnPoints],"null") == 0) || (strcmp(entType[spawnPoints],"0") == 0))
+            entType[spawnPoints] = "prop_physics_override";
+        if ((strcmp(script[spawnPoints][0],"null") == 0) || (strcmp(script[spawnPoints][0],"0") == 0))
+            script[spawnPoints][0] = "";
+        if ((strcmp(script[spawnPoints][1],"null") == 0) || (strcmp(script[spawnPoints][1],"0") == 0))
+            script[spawnPoints][1] = "";
+    }
     if (err)
     {
         CRespondToCommand(client, "[SM] Error modifying reward #{green}%d{default}. Some data may have been changed, some was not. This likely resulted in undefined behaviour.");
@@ -3122,17 +3235,14 @@ public Action:modifySpawnPoint(client, args)
                 defSpawnCoords[spawnPoints][i] = StringToFloat(strCoords[i]);
         }
     }
-    if ((strcmp(script[spawnPoints][0],"null") == 0) || (strcmp(script[spawnPoints][0],"0") == 0))
-        script[spawnPoints][0] = "";
-    if ((strcmp(script[spawnPoints][1],"null") == 0) || (strcmp(script[spawnPoints][1],"0") == 0))
-        script[spawnPoints][1] = "";
     if (nextArg <= args)
     {
-        GetCmdArg(nextArg++,rCommand[spawnPoints][whichCommand],128);
+        GetCmdArg(nextArg++,rCommand[spawnPoints][whichCommand],MAXCMDLEN);
+        decl String:cBuf[MAXCMDLEN];
         for (;nextArg <= args;nextArg++)
         {
-            GetCmdArg(nextArg,buffer,128);
-            Format(rCommand[spawnPoints][whichCommand],128,"%s %s",rCommand[spawnPoints][whichCommand],buffer);
+            GetCmdArg(nextArg,cBuf,MAXCMDLEN);
+            Format(rCommand[spawnPoints][whichCommand],MAXCMDLEN,"%s %s",rCommand[spawnPoints][whichCommand],cBuf);
         }
     }
     if (g_enable)
@@ -3243,9 +3353,9 @@ public Action:removeSpawnPoint(client, args)
             default:
             {
                 range[0] = StringToInt(buffer);
-                if ((dots+1) < blen)
+                if ((dots += 2) < blen)
                 {
-                    StrErase(buffer,0,dots+1);
+                    StrErase(buffer,0,dots);
                     range[1] = StringToInt(buffer);
                 }
                 else
@@ -3309,40 +3419,82 @@ public Action:manuallyRespawnReward(client, args)
         RespondToCommand(client, "[SM] Usage: sm_mrw_respawn <#id|name>");
         return Plugin_Handled;
     }
-    decl String:buffer[32], point;
-    GetCmdArg(1, buffer, sizeof(buffer));
-    point = getRewardID(buffer,client);
-    if (isValidReward(point))
+    decl String:buffer[32];
+    decl range[2];
+    new blen;
+    new dots;
+    for (new i = 1;i <= args;i++)
     {
-        killReward(point);
-        respawnMethod[point] &= ~HOOK_DEACTIVE;
-        spawnReward(point);
-        RespondToCommand(client, "[SM] Respawned reward #%d", point);
+        range[0] = range[1] = -1;
+        GetCmdArg(i, buffer, sizeof(buffer));
+        blen = strlen(buffer);
+        switch ((dots = StrFind(buffer,"..")))
+        {
+            case -1:
+            {
+                range[0] = range[1] = getRewardID(buffer,client);
+            }
+            case 0:
+            {
+                if (blen > 2)
+                {
+                    range[0] = 0;
+                    StrErase(buffer,0,2);
+                    range[1] = StringToInt(buffer);
+                }
+            }
+            default:
+            {
+                range[0] = StringToInt(buffer);
+                if ((dots += 2) < blen)
+                {
+                    StrErase(buffer,0,dots);
+                    range[1] = StringToInt(buffer);
+                }
+                else
+                    range[1] = MAXSPAWNPOINT-1;
+            }
+        }
+        if (range[0] > -1)
+        {
+            if (range[1] >= MAXSPAWNPOINT)
+                range[1] = MAXSPAWNPOINT-1;
+            for (new j = range[0];j <= range[1];j++)
+            {
+                killReward(j);
+                respawnMethod[j] &= ~HOOK_DEACTIVE;
+                spawnReward(j);
+            }
+            if (range[0] != range[1])
+                RespondToCommand(client, "[SM] Respawned rewards %d through %d.", range[0], range[1]);
+            else
+                RespondToCommand(client, "[SM] Respawned reward #%d.", range[0]);
+        }
+        else
+            RespondToCommand(client, "[SM] Unknown reward '%s'",buffer);
     }
-    else
-        RespondToCommand(client, "[SM] Error: Unknown reward '%s'",buffer);
     return Plugin_Handled;
 }
 
 triggerReward(index, client, inflictor = -1)
 {
-    decl String:cmdD[128];
-    strcopy(cmdD,128,rCommand[index][0]);
+    decl String:cmdD[MAXCMDLEN];
+    strcopy(cmdD,MAXCMDLEN,rCommand[index][0]);
     if ((inflictor > -1) && (strlen(rCommand[index][1]) > 0))
-        strcopy(cmdD,128,rCommand[index][1]);
+        strcopy(cmdD,MAXCMDLEN,rCommand[index][1]);
     if ((strlen(cmdD) > 0) && (strcmp(cmdD,"null") != 0))
     {
-        decl String:cmdC[128];
+        decl String:cmdC[MAXCMDLEN];
         decl String:target[8];
         Format(target,8,"#%i",GetClientUserId(client));
-        strcopy(cmdC,128,cmdD);
-        ReplaceString(cmdC,128,"#player",target);
-        ReplaceString(cmdC,128,"#reward",entName[index]);
+        strcopy(cmdC,MAXCMDLEN,cmdD);
+        ReplaceString(cmdC,MAXCMDLEN,"#player",target);
+        ReplaceString(cmdC,MAXCMDLEN,"#reward",entName[index]);
         if (inflictor > -1)
         {
             decl String:flict[8];
             IntToString(inflictor,flict,8);
-            ReplaceString(cmdC,128,"#inflictor",flict);
+            ReplaceString(cmdC,MAXCMDLEN,"#inflictor",flict);
         }
         ServerCommand(cmdC);
     }
@@ -3486,29 +3638,72 @@ spawnReward(index)
     
     killReward(index);
     
-    new entReward = CreateEntityByName(entType[index]);
+    decl String:tempModel[MAXINPUT];
+    decl String:tempEntType[64];
+    decl String:tempScript[2][MAXINPUT];
+    strcopy(tempModel,MAXINPUT,model[index]);
+    strcopy(tempEntType,64,entType[index]);
+    strcopy(tempScript[0],MAXINPUT,script[index][0]);
+    strcopy(tempScript[1],MAXINPUT,script[index][1]);
+    if (unEvaluate[index])
+    {
+        for (new i = 0;i < aliasCount;i++)
+        {
+            if ((strcmp(tempEntType,aliases[i][0]) == 0) || (strcmp(tempModel,aliases[i][0]) == 0))
+            {
+                if ((strlen(aliases[i][1]) > 0) && (strcmp(tempModel,"null") != 0) && (strcmp(tempModel,"0") != 0))
+                    strcopy(tempModel,MAXINPUT,aliases[i][1]);
+                if ((strlen(aliases[i][2]) > 0) && (strcmp(tempEntType,"null") != 0) && (strcmp(tempEntType,"0") != 0))
+                    strcopy(tempEntType,64,aliases[i][2]);
+                if ((strlen(aliases[i][3]) > 0) && (strcmp(tempScript[0],"null") != 0) && (strcmp(tempScript[0],"0") != 0))
+                    strcopy(tempScript[0],MAXINPUT,aliases[i][3]);
+                if ((strlen(aliases[i][4]) > 0) && (strcmp(tempScript[1],"null") != 0) && (strcmp(tempScript[1],"0") != 0))
+                    strcopy(tempScript[1],MAXINPUT,aliases[i][4]);
+                break;
+            }
+        }
+        for (new i = 0;i < scriptCount;i++)
+        {
+            if (strcmp(tempScript[0],scripts[i][0]) == 0)
+                strcopy(tempScript[0],MAXINPUT,scripts[i][1]);
+            if (strcmp(tempScript[1],scripts[i][0]) == 0)
+                strcopy(tempScript[1],MAXINPUT,scripts[i][1]);
+        }
+    }
+    if (strcmp(tempModel,"null") == 0)
+        strcopy(tempModel,MAXINPUT,"");
+    if (strcmp(tempEntType,"null") == 0)
+        strcopy(tempEntType,64,"");
+    if (strcmp(tempScript[0],"null") == 0)
+        strcopy(tempScript[0],MAXINPUT,"");
+    if (strcmp(tempScript[1],"null") == 0)
+        strcopy(tempScript[1],MAXINPUT,"");
+    if (strlen(tempEntType) < 1)
+        strcopy(tempEntType,64,"prop_physics_override");
+    
+    new entReward = CreateEntityByName(tempEntType);
     
     if (IsValidEntity(entReward))
     {
         SetEntPropString(entReward, Prop_Data, "m_iName", entName[index]);
-        if ((strlen(model[index]) > 0) && (strcmp(model[index],"null") != 0))
-            DispatchKeyValue(entReward, "model", model[index]);
+        if (strlen(tempModel) > 0)
+            DispatchKeyValue(entReward, "model", tempModel);
         new spawned = 0;
-        if (strlen(script[index][0]) > 0)
+        if (strlen(tempScript[0]) > 0)
         {
-            if (StrContains(script[index][0],"?") != -1)
+            if (StrContains(tempScript[0],"?") != -1)
             {
-                new String:strMain[2][64];
-                new String:strCurrent[64];
-                new String:strKeys[2][64];
+                new String:strMain[2][MAXINPUT];
+                new String:strCurrent[MAXINPUT];
+                new String:strKeys[2][MAXINPUT];
                 new String:strType[16];
-                new String:strTemp[64];
-                ExplodeString(script[index][0],"?",strMain,2,64,true);
-                Format(strMain[1],64,"%s&",strMain[1]);
+                new String:strTemp[MAXINPUT];
+                ExplodeString(tempScript[0],"?",strMain,2,MAXINPUT,true);
+                Format(strMain[1],MAXINPUT,"%s&",strMain[1]);
                 if (strcmp(strMain[0],"null") != 0)
                     DispatchKeyValue(entReward, "overridescript", strMain[0]);
                 //PrintToServer("[SM] Debug0: %s | %s",strMain[0],strMain[1]);
-                while (SplitString(strMain[1],"&",strCurrent,64) > -1)
+                while (SplitString(strMain[1],"&",strCurrent,MAXINPUT) > -1)
                 {
                     //PrintToServer("[SM] Debug1: %s",strCurrent);
                     if (StrContains(strCurrent,",") == -1)
@@ -3522,11 +3717,11 @@ spawnReward(index)
                     }
                     else
                     {
-                        ExplodeString(strCurrent,",",strKeys,2,64,true);
+                        ExplodeString(strCurrent,",",strKeys,2,MAXINPUT,true);
                         //PrintToServer("[SM] Debug2: %s | %s",strKeys[0],strKeys[1]);
                         SplitString(strKeys[1],"=",strType,16);
                         Format(strType,16,"%s=",strType);
-                        ReplaceStringEx(strKeys[1],64,strType,"",-1,0);
+                        ReplaceStringEx(strKeys[1],MAXINPUT,strType,"",-1,0);
                         //PrintToServer("[SM] Debug3: %s | %s",strType,strKeys[1]);
                         if ((strcmp(strType,"float=") == 0) || (strcmp(strType,"int=") == 0))
                             DispatchKeyValueFloat(entReward,strKeys[0],StringToFloat(strKeys[1]));
@@ -3535,27 +3730,27 @@ spawnReward(index)
                         else
                             DispatchKeyValue(entReward,strKeys[0],strKeys[1]);
                     }
-                    Format(strTemp,64,"%s&",strCurrent);
-                    ReplaceStringEx(strMain[1],64,strTemp,"",-1,0);
-                    ReplaceStringEx(strMain[1],64,strCurrent,"",-1,0);
+                    Format(strTemp,MAXINPUT,"%s&",strCurrent);
+                    ReplaceStringEx(strMain[1],MAXINPUT,strTemp,"",-1,0);
+                    ReplaceStringEx(strMain[1],MAXINPUT,strCurrent,"",-1,0);
                     //PrintToServer("[SM] Debug4: %s",strMain[1]);
                 }
             }
             else
-                DispatchKeyValue(entReward, "overridescript", script[index][0]);
+                DispatchKeyValue(entReward, "overridescript", tempScript[0]);
         }
-        if (strlen(script[index][1]) > 0)
+        if (strlen(tempScript[1]) > 0)
         {
             //[prop_type:]key,[type=]value&[prop_type:]key,[type=]value
-            decl String:strMain[65];
-            decl String:strCurrent[64];
-            decl String:strKeys[2][64];
+            decl String:strMain[MAXINPUT];
+            decl String:strCurrent[MAXINPUT];
+            decl String:strKeys[2][MAXINPUT];
             decl String:strType[16];
-            decl String:strTemp[65];
-            strcopy(strMain,65,script[index][1]);
-            StrCat(strMain,65,"&");
+            decl String:strTemp[MAXINPUT];
+            strcopy(strMain,MAXINPUT,tempScript[1]);
+            StrCat(strMain,MAXINPUT,"&");
             new PropType:propType;
-            while (SplitString(strMain,"&",strCurrent,64) > -1)
+            while (SplitString(strMain,"&",strCurrent,MAXINPUT) > -1)
             {
                 if (StrContains(strCurrent,",") > -1)
                 {
@@ -3571,10 +3766,10 @@ spawnReward(index)
                         DispatchSpawn(entReward);
                         spawned = 1;
                     }
-                    ExplodeString(strCurrent,",",strKeys,2,64,true);
+                    ExplodeString(strCurrent,",",strKeys,2,MAXINPUT,true);
                     SplitString(strKeys[1],"=",strType,16);
                     StrCat(strType,16,"=");
-                    ReplaceStringEx(strKeys[1],64,strType,"",-1,0);
+                    ReplaceStringEx(strKeys[1],MAXINPUT,strType,"",-1,0);
                     if (strcmp(strType,"float=") == 0)
                         SetEntPropFloat(entReward, propType, strKeys[0], StringToFloat(strKeys[1]));
                     else if (strcmp(strType,"int=") == 0)
@@ -3593,10 +3788,10 @@ spawnReward(index)
                     else
                         SetEntPropString(entReward, propType, strKeys[0], strKeys[1]);
                 }
-                strcopy(strTemp,65,strCurrent);
-                StrCat(strTemp,65,"&");
-                ReplaceStringEx(strMain,64,strTemp,"",-1,0);
-                ReplaceStringEx(strMain,64,strCurrent,"",-1,0);
+                strcopy(strTemp,MAXINPUT,strCurrent);
+                StrCat(strTemp,MAXINPUT,"&");
+                ReplaceStringEx(strMain,MAXINPUT,strTemp,"",-1,0);
+                ReplaceStringEx(strMain,MAXINPUT,strCurrent,"",-1,0);
             }
         }
         if (!spawned)
