@@ -5,7 +5,7 @@
 
 // StrPlus - Added String functionality, based loosely off C++ STL strings.
 // Written by nigel (NIGathan)
-// Version 0.005
+// Version 0.007
 
 // Copies a sub string of source to dest starting at pos and extending len
 //   characters.
@@ -63,6 +63,21 @@ stock StrFind(const String:source[], const String:search[], pos = 0)
     }
     if (match)
         return i;
+    return -1;
+}
+
+// Searches source for the first occurance of any character within search.
+// If pos is set, characters in source before pos will be ignored.
+// Returns the index in source of the first match or -1 if none were found.
+stock StrFindFirstOf(const String:source[], const String:search[], pos = 0)
+{
+    new srcLen = strlen(source);
+    new schLen = strlen(search);
+    if (pos < srcLen)
+        for (new i = pos;i < srcLen;i++)
+            for (new j = 0;j < schLen;j++)
+                if (source[i] == search[j])
+                    return i;
     return -1;
 }
 
@@ -172,4 +187,21 @@ stock StrIsDigit(const String:str[])
         return pos;
 }
 
+// Swaps the contents of str0 and str1
+// If one string is larger than the other, then UB may occur.
+stock StrSwap(String:str0[], String:str1[])
+{
+    decl String:temp[1];
+    decl size[2];
+    size[0] = strlen(str0)+1;
+    size[1] = strlen(str1)+1;
+    if (size[1] > size[0])
+        size[0] = size[1];
+    for (new i = 0;i <= size[0];i++)
+    {
+        temp[0] = str0[i];
+        str0[i] = str1[i];
+        str1[i] = temp[0];
+    }
+}
 
