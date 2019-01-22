@@ -5,7 +5,7 @@
 #include <colors>
 #include <strplus>
 
-#define VERSION "0.222"
+#define VERSION "0.223"
 
 #define MAXSPAWNPOINT       512
 #define MAXALIASES          128
@@ -54,58 +54,6 @@ public Plugin:myinfo =
     version = VERSION,
     url = "http://sandvich.justca.me/"
 };
-
-/*    *    *    *    *    *    *    *\
-\*                                  */
-/*               TODO               *\
-\*                                  */
-/*    add sm_mrw_trigger command    *\
-\*                                  */
-/*          v0.222 CHANGES
-  
-  sm_mrw_add/modify switch changes:
-    -P no longer unsets static and constant.
-    -S no longer sets touch (pickup).
-    -C no longer sets touch (pickup).
-  
-  Fixed error output from sm_mrw_modify.
-  
-  Fixed bug with respawn_method not disabling the reward on spawn if spawned with -d 11 (static, pickup, HOOK_DEACTIVE).
-  
-  Now reward names cannot contain spaces or commas, and cannot begin with a digit.
-  
-  Now anywhere multiple rewards can be selected, mutliple reward selectors may be provided by seperating them with commas:
-    sm_mrw_modify ..10,@aim,@n,couch ... will select the first 10, whichever reward you are looking at, the nearest reward to you, and the reward with the name couch.
-  
-  Added inverted reward selectors, to exclude them from the selection. Prefix the reward id/range/selector/name... with an exclamation point:
-    sm_mrw_modify 0..,!10..16,!couch,13,!@n,!-1 ... will select all rewards except for 10, 11, 12, 14, 15, 16, couch, the nearest, and the newest.
-      Doing !couch will not automatically select everything except for couch. You must first select everything (0..), then unselect the ones you don't want.
-        The order of the segments is preserved in the final result.
-  
-  All reward selectors are now allowed everywhere, including in sm_mrw_add, and they all work properly and as expected.
-    sm_mrw_add -b <@aim|@n|-1|id|name> is now allowed.
-      In places where only one reward can be selected (like -b), ranges nor the new format are allowed.
-      In places where multiple reward arguments are allowed, like -E (exclude) switches or sm_mrw_remove 1 2 3, the new format is not in place. The new format will probably replace it in a coming update though.
-  
-  sm_mrw_modify/turn commands now allow multiple reward IDs like sm_mrw_move.
-    For conflict prevention, sm_mrw_modify will ignore the -n switch if multiple rewards have been specified.
-  
-  Added glow rgba colors for rewards. Similar to the sm_colorize command.
-  
-  Added new switches to sm_mrw_add/modify:
-    -l <R G B A>: Set a color overlay on the entity.
-    -L <integer_color>: Set a color overlay on the entity. 0 is fully transparent and -1 is full color and fully opaque.
-    -u: Unsets -U, causing the current definitions to be evaluated now. Does nothing if -U wasn't already set. Also does nothing with sm_mrw_add unless -b is used with a reward that had -U set.
-  
-  sm_mrw_cfg_save/load now accept @aim as an argument for the -o switch.
-  
-  Complete rewrite for how reward aliases are evaluated.
-    Now if both entity_type and model arguments are aliases and -U is used, the first appearing alias will resolve all options, then the next alias will only resolve for itself and any options that were not set by the first.
-    The old behaviour stopped after the first alias was found.
-  
-                                    */
-/*                                  *\
-\*    *    *    *    *    *    *    */
 
 new Handle:c_enable = INVALID_HANDLE;
 new Handle:c_respawnTime = INVALID_HANDLE;
@@ -191,6 +139,7 @@ public OnPluginStart()
     RegConsoleCmd("sm_mrw_release", releaseReward, "Releases a reward from local memory. WARNING YOU WILL NOT BE ABLE TO ALTER OR SAVE ANY RELEASED ENTITIES.");
     RegConsoleCmd("sm_mrw_kill", killEntity, "Kills an entity by its edict ID. To be used with entities after releasing them.");
     RegConsoleCmd("sm_mrw_respawn", manuallyRespawnReward, "Respawn or reactivate a reward early.");
+    RegConsoleCmd("sm_mrw_trigger", mapRewardTrigger, "Triggers a reward remotely.");
     RegAdminCmd("sm_exec2", exec2CFG, ADMFLAG_SLAY, "Executes a cfg file provided as the second argument. Accepts a first argument, but is ignored unless the third argument is '0'. If the third argument is anything else, it will be used instead of the player's name. Any additional arguments will be used instead of the default message.");
     RegAdminCmd("sm_teleplus", teleportCmd, ADMFLAG_SLAY, "Teleport a player to a set of coordinates with optional rotation and velocity. Relative coords, angles, and velocity are allowed.");
     
@@ -385,15 +334,8 @@ public Action:exec2CFG(client, args)
 
 public Action:listSavedCFG(client, args)
 {
-    if (client > 0)
-    {
-        new flagBits = GetUserFlagBits(client);
-        if (((flagBits & ADMFLAG_ROOT) == 0) && ((flagBits & g_basicFlag) != g_basicFlag))
-        {
-            ReplyToCommand(client,"[SM] You do not have access to this command.");
-            return Plugin_Handled;
-        }
-    }
+    if (!handleClientAccess(client,g_basicFlag))
+        return Plugin_Handled;
     decl String:dir[128];
     new bool:topdir = true;
     dir = "cfg/maprewards/";
@@ -433,15 +375,8 @@ public Action:listSavedCFG(client, args)
 
 public Action:deleteSavedCFG(client, args)
 {
-    if (client > 0)
-    {
-        new flagBits = GetUserFlagBits(client);
-        if (((flagBits & ADMFLAG_ROOT) == 0) && ((flagBits & g_extendedFlag) != g_extendedFlag))
-        {
-            ReplyToCommand(client,"[SM] You do not have access to this command.");
-            return Plugin_Handled;
-        }
-    }
+    if (!handleClientAccess(client,g_extendedFlag))
+        return Plugin_Handled;
     decl String:filename[128];
     filename = "cfg/maprewards/";
     if (args < 1)
@@ -473,15 +408,8 @@ public Action:deleteSavedCFG(client, args)
 
 public Action:purgeSavedCFG(client, args)
 {
-    if (client > 0)
-    {
-        new flagBits = GetUserFlagBits(client);
-        if (((flagBits & ADMFLAG_ROOT) == 0) && ((flagBits & g_extendedFlag) != g_extendedFlag))
-        {
-            ReplyToCommand(client,"[SM] You do not have access to this command.");
-            return Plugin_Handled;
-        }
-    }
+    if (!handleClientAccess(client,g_extendedFlag))
+        return Plugin_Handled;
     if (DirExists("cfg/maprewards/backup"))
     {
         if (RemoveDir("cfg/maprewards/backup"))
@@ -512,15 +440,8 @@ getNewestReward()
 
 public Action:releaseReward(client, args)
 {
-    if (client > 0)
-    {
-        new flagBits = GetUserFlagBits(client);
-        if (((flagBits & ADMFLAG_ROOT) == 0) && ((flagBits & g_basicFlag) != g_basicFlag))
-        {
-            ReplyToCommand(client,"[SM] You do not have access to this command.");
-            return Plugin_Handled;
-        }
-    }
+    if (!handleClientAccess(client,g_basicFlag))
+        return Plugin_Handled;
     if (args < 1)
     {
         RespondToCommand(client,"[SM] Usage: sm_mrw_release <#id|name>");
@@ -561,15 +482,8 @@ public Action:releaseReward(client, args)
 
 public Action:copyReward(client, args)
 {
-    if (client > 0)
-    {
-        new flagBits = GetUserFlagBits(client);
-        if (((flagBits & ADMFLAG_ROOT) == 0) && ((flagBits & g_createFlag) != g_createFlag))
-        {
-            ReplyToCommand(client,"[SM] You do not have access to this command.");
-            return Plugin_Handled;
-        }
-    }
+    if (!handleClientAccess(client,g_createFlag))
+        return Plugin_Handled;
     switch (args)
     {
         case 4,7,8,9:
@@ -652,15 +566,8 @@ public Action:copyReward(client, args)
 
 public Action:copyRewardHere(client, args)
 {
-    if (client > 0)
-    {
-        new flagBits = GetUserFlagBits(client);
-        if (((flagBits & ADMFLAG_ROOT) == 0) && ((flagBits & g_createFlag) != g_createFlag))
-        {
-            ReplyToCommand(client,"[SM] You do not have access to this command.");
-            return Plugin_Handled;
-        }
-    }
+    if (!handleClientAccess(client,g_createFlag))
+        return Plugin_Handled;
     if (args < 1)
     {
         RespondToCommand(client,"[SM] Usage: sm_mrw_copy_here <#id|name> [new_name] [new_script]");
@@ -727,15 +634,8 @@ public Action:copyRewardHere(client, args)
 
 public Action:moveReward(client, args)
 {
-    if (client > 0)
-    {
-        new flagBits = GetUserFlagBits(client);
-        if (((flagBits & ADMFLAG_ROOT) == 0) && ((flagBits & g_basicFlag) != g_basicFlag))
-        {
-            ReplyToCommand(client,"[SM] You do not have access to this command.");
-            return Plugin_Handled;
-        }
-    }
+    if (!handleClientAccess(client,g_basicFlag))
+        return Plugin_Handled;
     new bool:needsArgs = true;
     decl String:buffer[MAXINPUT];
     decl String:strCoords[16];
@@ -794,15 +694,8 @@ public Action:moveReward(client, args)
 
 public Action:turnReward(client, args)
 {
-    if (client > 0)
-    {
-        new flagBits = GetUserFlagBits(client);
-        if (((flagBits & ADMFLAG_ROOT) == 0) && ((flagBits & g_basicFlag) != g_basicFlag))
-        {
-            ReplyToCommand(client,"[SM] You do not have access to this command.");
-            return Plugin_Handled;
-        }
-    }
+    if (!handleClientAccess(client,g_basicFlag))
+        return Plugin_Handled;
     if (args < 4)
     {
         RespondToCommand(client,"[SM] Usage: sm_mrw_turn <#id|name> <RX RY RZ>");
@@ -840,15 +733,8 @@ public Action:turnReward(client, args)
 
 public Action:tpPlayer(client, args)
 {
-    if (client > 0)
-    {
-        new flagBits = GetUserFlagBits(client);
-        if (((flagBits & ADMFLAG_ROOT) == 0) && ((flagBits & g_basicFlag) != g_basicFlag))
-        {
-            ReplyToCommand(client,"[SM] You do not have access to this command.");
-            return Plugin_Handled;
-        }
-    }
+    if (!handleClientAccess(client,g_basicFlag))
+        return Plugin_Handled;
     if (args < 1)
     {
         RespondToCommand(client,"[SM] Usage: sm_mrw_tp <#id|name> [#userid|name] [X Y Z] [RX RY RZ] [VX VY VZ]");
@@ -994,15 +880,8 @@ stock buildRewardCmd(index, String:cmdC[], cmdSize, bool:relative = false, const
 
 public Action:infoSpawnPoint(client, args)
 {
-    if (client > 0)
-    {
-        new flagBits = GetUserFlagBits(client);
-        if (((flagBits & ADMFLAG_ROOT) == 0) && ((flagBits & g_basicFlag) != g_basicFlag))
-        {
-            ReplyToCommand(client,"[SM] You do not have access to this command.");
-            return Plugin_Handled;
-        }
-    }
+    if (!handleClientAccess(client,g_basicFlag))
+        return Plugin_Handled;
     if (args < 1)
     {
         RespondToCommand(client,"[SM] Usage: sm_mrw_info <#id|name>");
@@ -1031,15 +910,8 @@ public Action:infoSpawnPoint(client, args)
 
 public Action:listAlias(client, args)
 {
-    if (client > 0)
-    {
-        new flagBits = GetUserFlagBits(client);
-        if (((flagBits & ADMFLAG_ROOT) == 0) && ((flagBits & g_basicFlag) != g_basicFlag))
-        {
-            ReplyToCommand(client,"[SM] You do not have access to this command.");
-            return Plugin_Handled;
-        }
-    }
+    if (!handleClientAccess(client,g_basicFlag))
+        return Plugin_Handled;
     for (new i = 0;i < aliasCount;i++)
         RespondToCommand(client,"[SM] #%d: '%s' = '%s' (%s) : '%s' : '%s'",i,aliases[i][0],aliases[i][1],aliases[i][2],aliases[i][3],aliases[i][4]);
     return Plugin_Handled;
@@ -1047,15 +919,8 @@ public Action:listAlias(client, args)
 
 public Action:reloadAlias(client, args)
 {
-    if (client > 0)
-    {
-        new flagBits = GetUserFlagBits(client);
-        if (((flagBits & ADMFLAG_ROOT) == 0) && ((flagBits & g_basicFlag) != g_basicFlag))
-        {
-            ReplyToCommand(client,"[SM] You do not have access to this command.");
-            return Plugin_Handled;
-        }
-    }
+    if (!handleClientAccess(client,g_basicFlag))
+        return Plugin_Handled;
     aliasCount = loadAliases();
     RespondToCommand(client,"[SM] Successfully loaded %d aliases.",aliasCount);
     return Plugin_Handled;
@@ -1063,15 +928,8 @@ public Action:reloadAlias(client, args)
 
 public Action:addAlias(client, args)
 {
-    if (client > 0)
-    {
-        new flagBits = GetUserFlagBits(client);
-        if (((flagBits & ADMFLAG_ROOT) == 0) && ((flagBits & g_basicFlag) != g_basicFlag))
-        {
-            ReplyToCommand(client,"[SM] You do not have access to this command.");
-            return Plugin_Handled;
-        }
-    }
+    if (!handleClientAccess(client,g_basicFlag))
+        return Plugin_Handled;
     if (args < 2)
     {
         RespondToCommand(client, "[SM] Usage: sm_mrw_model_add <name> <model> [entity_type] [overridescript] [entity_properties]");
@@ -1096,15 +954,8 @@ public Action:addAlias(client, args)
 
 public Action:saveAlias(client, args)
 {
-    if (client > 0)
-    {
-        new flagBits = GetUserFlagBits(client);
-        if (((flagBits & ADMFLAG_ROOT) == 0) && ((flagBits & g_basicFlag) != g_basicFlag))
-        {
-            ReplyToCommand(client,"[SM] You do not have access to this command.");
-            return Plugin_Handled;
-        }
-    }
+    if (!handleClientAccess(client,g_basicFlag))
+        return Plugin_Handled;
     if (writeAliases())
         RespondToCommand(client, "[SM] Successfully saved 'cfg/maprewards/aliases.cfg' file.");
     else
@@ -1167,15 +1018,8 @@ writeAliases()
 
 public Action:listScript(client, args)
 {
-    if (client > 0)
-    {
-        new flagBits = GetUserFlagBits(client);
-        if (((flagBits & ADMFLAG_ROOT) == 0) && ((flagBits & g_basicFlag) != g_basicFlag))
-        {
-            ReplyToCommand(client,"[SM] You do not have access to this command.");
-            return Plugin_Handled;
-        }
-    }
+    if (!handleClientAccess(client,g_basicFlag))
+        return Plugin_Handled;
     for (new i = 0;i < scriptCount;i++)
         RespondToCommand(client,"[SM] #%d: '%s' = '%s'",i,scripts[i][0],scripts[i][1]);
     return Plugin_Handled;
@@ -1183,15 +1027,8 @@ public Action:listScript(client, args)
 
 public Action:reloadScript(client, args)
 {
-    if (client > 0)
-    {
-        new flagBits = GetUserFlagBits(client);
-        if (((flagBits & ADMFLAG_ROOT) == 0) && ((flagBits & g_basicFlag) != g_basicFlag))
-        {
-            ReplyToCommand(client,"[SM] You do not have access to this command.");
-            return Plugin_Handled;
-        }
-    }
+    if (!handleClientAccess(client,g_basicFlag))
+        return Plugin_Handled;
     scriptCount = loadScripts();
     RespondToCommand(client,"[SM] Successfully loaded %d scripts.",scriptCount);
     return Plugin_Handled;
@@ -1199,15 +1036,8 @@ public Action:reloadScript(client, args)
 
 public Action:addScript(client, args)
 {
-    if (client > 0)
-    {
-        new flagBits = GetUserFlagBits(client);
-        if (((flagBits & ADMFLAG_ROOT) == 0) && ((flagBits & g_basicFlag) != g_basicFlag))
-        {
-            ReplyToCommand(client,"[SM] You do not have access to this command.");
-            return Plugin_Handled;
-        }
-    }
+    if (!handleClientAccess(client,g_basicFlag))
+        return Plugin_Handled;
     if (args < 2)
     {
         RespondToCommand(client, "[SM] Usage: sm_mrw_script_add <name> <script>");
@@ -1225,15 +1055,8 @@ public Action:addScript(client, args)
 
 public Action:saveScript(client, args)
 {
-    if (client > 0)
-    {
-        new flagBits = GetUserFlagBits(client);
-        if (((flagBits & ADMFLAG_ROOT) == 0) && ((flagBits & g_basicFlag) != g_basicFlag))
-        {
-            ReplyToCommand(client,"[SM] You do not have access to this command.");
-            return Plugin_Handled;
-        }
-    }
+    if (!handleClientAccess(client,g_basicFlag))
+        return Plugin_Handled;
     if (writeScripts())
         RespondToCommand(client, "[SM] Successfully saved 'cfg/maprewards/scripts.cfg' file.");
     else
@@ -1320,15 +1143,8 @@ RespondWriteUsage(client)
 
 public Action:writeCFG(client, args)
 {
-    if (client > 0)
-    {
-        new flagBits = GetUserFlagBits(client);
-        if (((flagBits & ADMFLAG_ROOT) == 0) && ((flagBits & g_extendedFlag) != g_extendedFlag))
-        {
-            ReplyToCommand(client,"[SM] You do not have access to this command.");
-            return Plugin_Handled;
-        }
-    }
+    if (!handleClientAccess(client,g_extendedFlag))
+        return Plugin_Handled;
     if (args < 1)
     {
         RespondWriteUsage(client);
@@ -1538,15 +1354,8 @@ RespondLoadUsage(client)
 
 public Action:loadCFG(client, args)
 {
-    if (client > 0)
-    {
-        new flagBits = GetUserFlagBits(client);
-        if (((flagBits & ADMFLAG_ROOT) == 0) && ((flagBits & g_basicFlag) != g_basicFlag))
-        {
-            ReplyToCommand(client,"[SM] You do not have access to this command.");
-            return Plugin_Handled;
-        }
-    }
+    if (!handleClientAccess(client,g_basicFlag))
+        return Plugin_Handled;
     if (args < 1)
     {
         RespondLoadUsage(client);
@@ -1861,15 +1670,8 @@ killRewards()
 
 public Action:killEntity(client, args)
 {
-    if (client > 0)
-    {
-        new flagBits = GetUserFlagBits(client);
-        if (((flagBits & ADMFLAG_ROOT) == 0) && ((flagBits & g_basicFlag) != g_basicFlag))
-        {
-            ReplyToCommand(client,"[SM] You do not have access to this command.");
-            return Plugin_Handled;
-        }
-    }
+    if (!handleClientAccess(client,g_basicFlag))
+        return Plugin_Handled;
     if (args < 1)
     {
         RespondToCommand(client, "[SM] Usage: sm_mrw_kill <#entity_id>");
@@ -2151,15 +1953,8 @@ stock RespondUsage(client)
 
 public Action:addSpawnPoint(client, args)
 {
-    if (client > 0)
-    {
-        new flagBits = GetUserFlagBits(client);
-        if (((flagBits & ADMFLAG_ROOT) == 0) && ((flagBits & g_createFlag) != g_createFlag))
-        {
-            ReplyToCommand(client,"[SM] You do not have access to this command.");
-            return Plugin_Handled;
-        }
-    }
+    if (!handleClientAccess(client,g_createFlag))
+        return Plugin_Handled;
     if (args < 2)
     {
         RespondUsage(client);
@@ -2680,15 +2475,8 @@ public Action:addSpawnPoint(client, args)
 // This command will soon be removed in a future release, if you have old configs, you should load and resave them before this happens.
 public Action:addSpawnPointCustom(client, args)
 {
-    if (client > 0)
-    {
-        new flagBits = GetUserFlagBits(client);
-        if (((flagBits & ADMFLAG_ROOT) == 0) && ((flagBits & g_createFlag) != g_createFlag))
-        {
-            ReplyToCommand(client,"[SM] You do not have access to this command.");
-            return Plugin_Handled;
-        }
-    }
+    if (!handleClientAccess(client,g_createFlag))
+        return Plugin_Handled;
     if (args < 8)
     {
         CRespondToCommand(client, "[SM] Usage: sm_mrw_add_custom <{green}entity_type{default}> <{green}X Y Z{default}> <{green}RX RY RZ{default}> <{green}model{default}> [{green}command{default}] [{green}script{default}] [{green}respawn_time{default}] [{green}respawn_method{default}] [{green}command2 ...{default}]");
@@ -2899,15 +2687,8 @@ stock evaluateRewardAliases(const &any:r, bool:skip[4] = { false, ... })
 
 public Action:modifySpawnPoint(client, args)
 {
-    if (client > 0)
-    {
-        new flagBits = GetUserFlagBits(client);
-        if (((flagBits & ADMFLAG_ROOT) == 0) && ((flagBits & g_createFlag) != g_createFlag))
-        {
-            ReplyToCommand(client,"[SM] You do not have access to this command.");
-            return Plugin_Handled;
-        }
-    }
+    if (!handleClientAccess(client,g_createFlag))
+        return Plugin_Handled;
     if (args < 2)
     {
         RespondModifyUsage(client);
@@ -3854,15 +3635,8 @@ stock getRewardList(const String:rewards[], bool:list[MAXSPAWNPOINT], any:client
 
 public Action:removeSpawnPoint(client, args)
 {
-    if (client > 0)
-    {
-        new flagBits = GetUserFlagBits(client);
-        if (((flagBits & ADMFLAG_ROOT) == 0) && ((flagBits & g_basicFlag) != g_basicFlag))
-        {
-            ReplyToCommand(client,"[SM] You do not have access to this command.");
-            return Plugin_Handled;
-        }
-    }
+    if (!handleClientAccess(client,g_basicFlag))
+        return Plugin_Handled;
     if (args < 1)
     {
         RespondToCommand(client, "[SM] Usage: sm_mrw_remove <#id|name>");
@@ -3894,15 +3668,8 @@ public Action:removeSpawnPoint(client, args)
 
 public Action:removeSpawnPoints(client, args)
 {
-    if (client > 0)
-    {
-        new flagBits = GetUserFlagBits(client);
-        if (((flagBits & ADMFLAG_ROOT) == 0) && ((flagBits & g_basicFlag) != g_basicFlag))
-        {
-            ReplyToCommand(client,"[SM] You do not have access to this command.");
-            return Plugin_Handled;
-        }
-    }
+    if (!handleClientAccess(client,g_basicFlag))
+        return Plugin_Handled;
     removeRewards();
     if (client != 0)
         autoSave(SAVE_REMOVE,true);
@@ -3912,15 +3679,8 @@ public Action:removeSpawnPoints(client, args)
 
 public Action:manuallyRespawnReward(client, args)
 {
-    if (client > 0)
-    {
-        new flagBits = GetUserFlagBits(client);
-        if (((flagBits & ADMFLAG_ROOT) == 0) && ((flagBits & g_basicFlag) != g_basicFlag))
-        {
-            ReplyToCommand(client,"[SM] You do not have access to this command.");
-            return Plugin_Handled;
-        }
-    }
+    if (!handleClientAccess(client,g_basicFlag))
+        return Plugin_Handled;
     if (args < 1)
     {
         RespondToCommand(client, "[SM] Usage: sm_mrw_respawn <#id|name>");
@@ -3974,29 +3734,169 @@ triggerReward(index, client, inflictor = -1)
     }
 }
 
+stock bool:handleClientAccess(client, any:flags)
+{
+    if (client > 0)
+    {
+        new flagBits = GetUserFlagBits(client);
+        if (((flagBits & ADMFLAG_ROOT) == 0) && ((flagBits & flags) != flags))
+        {
+            ReplyToCommand(client,"[SM] You do not have access to this command.");
+            return false;
+        }
+    }
+    return true;
+}
+
+RespondTriggerUsage(client)
+{
+    CRespondToCommand(client,"[SM] Usage: {green}sm_mrw_trigger{default} <{green}#reward_id|name{default}> [{green}OPTIONS ...{default}] [{green}#userid|name{default}]");
+    CRespondToCommand(client,"[SM]    {green}OPTIONS{default}:");
+    CRespondToCommand(client,"[SM]       {green}-R{default}   Do not kill and respawn the reward.");
+    CRespondToCommand(client,"[SM]       {green}-t{default} <{green}respawn_time{default}>");
+    CRespondToCommand(client,"[SM]          Temporarily override the reward's {green}respawn_time{default} setting.");
+    CRespondToCommand(client,"[SM]       {green}-X{default}   Treat the trigger as a hurt or kill event.");
+}
+
+public Action:mapRewardTrigger(client, args)
+{
+    if (handleClientAccess(client,g_basicFlag))
+    {
+        if (args < 1)
+            RespondTriggerUsage(client);
+        else
+        {
+            decl String:buffer[MAXINPUT];
+            new bool:list[MAXSPAWNPOINT];
+            GetCmdArg(1,buffer,MAXINPUT);
+            if (!getRewardList(buffer,list,client))
+                RespondToCommand(client, "[SM] Error: Found no rewards matching '%s'",buffer);
+            else
+            {
+                new nextArg = 2;
+                new bool:lastArg = false;
+                new bool:err = false;
+                new inflictor = -1;
+                new bool:despawn = true;
+                decl String:target_name[MAX_NAME_LENGTH];
+                decl target_list[1];
+                target_list[0] = client;
+                decl Float:rTime;
+                new bool:newTime = false;
+                for (;nextArg <= args;nextArg++)
+                {
+                    if (nextArg == args)
+                        lastArg = true;
+                    GetCmdArg(nextArg,buffer,MAXINPUT);
+                    if (buffer[0] == '-')
+                    {
+                        if (buffer[1] == '-')
+                        {
+                            nextArg++;
+                            break;
+                        }
+                        switch (buffer[1])
+                        {
+                            case 'X': // Hurt command
+                            {
+                                inflictor = client;
+                            }
+                            case 'R': // Ignore the respawn_method of the reward
+                            {
+                                despawn = false;
+                            }
+                            case 't': // Custom respawn time
+                            {
+                                if (lastArg)
+                                    err = true;
+                                else
+                                {
+                                    GetCmdArg(++nextArg,buffer,MAXINPUT);
+                                    rTime = StringToFloat(buffer);
+                                    newTime = true;
+                                }
+                            }
+                            default:
+                            {
+                                CRespondToCommand(client,"[SM] Ignoring unknown switch: {green}%s",buffer);
+                            }
+                        }
+                    }
+                    else
+                    {
+                        GetCmdArg(nextArg,buffer,MAXINPUT);
+                        decl bool:tn_is_ml;
+                        if (ProcessTargetString(buffer,client,target_list,1,0,target_name,MAX_NAME_LENGTH,tn_is_ml) <= 0)
+                        {
+                            ReplyToTargetError(client,0);
+                            return Plugin_Handled;
+                        }
+                        inflictor = target_list[0];
+                        break;
+                    }
+                    if (err)
+                        break;
+                }
+                if (err)
+                    RespondTriggerUsage(client);
+                else for (new r = 0;r < MAXSPAWNPOINT;r++)
+                {
+                    if (list[r])
+                    {
+                        triggerReward(r,target_list[0],inflictor);
+                        if ((despawn) && (spawnEnts[r] > -1))
+                        {
+                            if (respawnMethod[r] & HOOK_STATIC)
+                            {
+                                if (respawnMethod[r] & HOOK_TOUCH)
+                                    SDKUnhook(spawnEnts[r], SDKHook_StartTouch, mapRewardPickUp);
+                                respawnMethod[r] |= HOOK_DEACTIVE;
+                            }
+                            if (!(respawnMethod[r] & HOOK_CONSTANT))
+                            {
+                                if (!(respawnMethod[r] & HOOK_STATIC))
+                                    killReward(r);
+                                if (!newTime)
+                                    rTime = respawnTime[r];
+                                if (rTime < 0.0)
+                                    CreateTimer(g_respawnTime,timerRespawnReward,r);
+                                else if (rTime > 0.0)
+                                    CreateTimer(rTime,timerRespawnReward,r);
+                            }
+                        }
+                        CRespondToCommand(client,"[SM] Triggered reward #{green}%d",r);
+                    }
+                }
+            }
+        }
+    }
+    return Plugin_Handled;
+}
+
 public Action:mapRewardPickUp(ent, client)
 {
     if ((g_enable) && (client > 0) && (client <= MaxClients) && (IsClientInGame(client)))
     {
-        new index = -1;
         for (new i = 0; i < MAXSPAWNPOINT; i++)
-            if (spawnEnts[i] == ent) index = i;
-        if (index > -1)
         {
-            triggerReward(index,client);
-            if (respawnMethod[index] & HOOK_STATIC)
+            if (spawnEnts[i] == ent)
             {
-                SDKUnhook(spawnEnts[index], SDKHook_StartTouch, mapRewardPickUp);
-                respawnMethod[index] |= HOOK_DEACTIVE;
-            }
-            if (!(respawnMethod[index] & HOOK_CONSTANT))
-            {
-                if (!(respawnMethod[index] & HOOK_STATIC))
-                    killReward(index);
-                if (respawnTime[index] < 0.0)
-                    CreateTimer(g_respawnTime, timerRespawnReward, index);
-                else if (respawnTime[index] > 0.0)
-                    CreateTimer(respawnTime[index], timerRespawnReward, index);
+                triggerReward(i,client);
+                if (respawnMethod[i] & HOOK_STATIC)
+                {
+                    SDKUnhook(spawnEnts[i], SDKHook_StartTouch, mapRewardPickUp);
+                    respawnMethod[i] |= HOOK_DEACTIVE;
+                }
+                if (!(respawnMethod[i] & HOOK_CONSTANT))
+                {
+                    if (!(respawnMethod[i] & HOOK_STATIC))
+                        killReward(i);
+                    if (respawnTime[i] < 0.0)
+                        CreateTimer(g_respawnTime, timerRespawnReward, i);
+                    else if (respawnTime[i] > 0.0)
+                        CreateTimer(respawnTime[i], timerRespawnReward, i);
+                }
+                break;
             }
         }
     }
