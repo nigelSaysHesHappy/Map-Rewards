@@ -3,7 +3,7 @@
 #include <string>
 #include <sdkhooks>
 
-#define VERSION "0.241_Pre-Stable"
+#define VERSION "1.000"
 
 #define MAXSPAWNPOINT       512
 #define MAXALIASES          128
