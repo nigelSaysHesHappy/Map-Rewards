@@ -2,10 +2,8 @@
 #include <sdktools>
 #include <string>
 #include <sdkhooks>
-#include <colors>
-#include <strplus>
 
-#define VERSION "0.223"
+#define VERSION "0.241_Pre-Stable"
 
 #define MAXSPAWNPOINT       512
 #define MAXALIASES          128
@@ -44,7 +42,82 @@
 
 #define FULLSPECTRUM        -1
 
-#define ILLEGAL_NAME        ", "
+#define ILLEGAL_NAME        "@, "
+
+/* * * * * * * * * * * * * * * *\
+\*                             */
+/*          CHANGELOG          *\
+\*                             */
+/*      v0.224_Pre-Stable      *\
+\*                             */
+/* Reward names can no longer  *\
+\*     contain '@' or '..'     */
+/*                             *\
+\*  sm_teleplus now accepts a  */
+/*  target as the second arg.  *\
+\*                             */
+/* Removed the following cmds: *\
+\*      sm_mrw_add_custom      */
+/*        sm_mrw_copy          *\
+\*       sm_mrw_copyhere       */
+/*        sm_mrw_move          *\
+\*        sm_mrw_turn          */
+/*       sm_mrw_release        *\
+\*  All functionality exists   */
+/*    within sm_mrw_modify.    *\
+\*                             */
+/*  Better code organization.  *\
+\*                             */
+/*      v0.234_Pre-Stable      *\
+\*                             */
+/*     Removed strplus.inc     *\
+\*     Removed colors.inc      */
+/*                             *\
+\*      v0.235_Pre-Stable      */
+/*                             *\
+\* Fixed sm_teleplus bug that  */
+/*  incorrectly processed XYZ  *\
+\* as a target client string.  */
+/*                             *\
+\*      v0.236_Pre-Stable      */
+/*                             *\
+\*  Fixed sm_mrw_trigger bug   */
+/*  automatically setting the  *\
+\* -X switch when a target is  */
+/*          provided.          *\
+\*                             */
+/*      v0.237_Pre-Stable      *\
+\*                             */
+/*  Optimized colors in chat.  *\
+\*                             */
+/*      v0.238_Pre-Stable      *\
+\*                             */
+/* Hopefully fixed sm_mrw_add  *\
+\* help message being cut off. */
+/*                             *\
+\*      v0.239_Pre-Stable      */
+/*                             *\
+\* Removed some useless error  */
+/*           output.           *\
+\*                             */
+/*   sm_mrw_info is now more   *\
+\* comprehensive and colorful. */
+/*                             *\
+\*      v0.240_Pre-Stable      */
+/*                             *\
+\*  Decreased precision of -T  */
+/*    settings when saving.    *\
+\*                             */
+/*           v1.000            *\
+\*                             */
+/*    First stable release!    *\
+\*                             */
+/*    Now the -X switch in     *\
+\*  sm_mrw_modify will unset   */
+/* the hurt command if none is *\
+\*          provided.          */
+/*                             *\
+\* * * * * * * * * * * * * * * */
 
 public Plugin:myinfo =
 {
@@ -54,6 +127,307 @@ public Plugin:myinfo =
     version = VERSION,
     url = "http://sandvich.justca.me/"
 };
+
+// Returns the index in source where search is found or -1 if not found.
+// If pos is set, characters in source before pos will be ignored.
+stock StrFind(const String:source[], const String:search[], pos = 0)
+{
+    new srcLen = strlen(source);
+    new schLen = strlen(search);
+    if (pos >= srcLen)
+        return -1;
+    new i, j;
+    new bool:match = false;
+    for (i = pos;((i < srcLen) && (!match));i++)
+    {
+        for (j = 0;j < schLen;j++)
+            if (source[i+j] != search[j])
+                break;
+        if (j == schLen)
+        {
+            match = true;
+            break;
+        }
+    }
+    if (match)
+        return i;
+    return -1;
+}
+
+// Searches source for the first occurance of any character within search.
+// If pos is set, characters in source before pos will be ignored.
+// Returns the index in source of the first match or -1 if none were found.
+stock StrFindFirstOf(const String:source[], const String:search[], pos = 0)
+{
+    new srcLen = strlen(source);
+    new schLen = strlen(search);
+    for (;pos < srcLen;pos++)
+        for (new i = 0;i < schLen;i++)
+            if (source[pos] == search[i])
+                return pos;
+    return -1;
+}
+
+// Removes every occurance of any character from search found in source
+//  starting at pos.
+// Returns the number of characters removed.
+stock StrRemoveAllOf(String:source[], const String:search[], pos = 0)
+{
+    new removals = 0;
+    new srcLen = strlen(source);
+    new schLen = strlen(search);
+    decl h, i, start, end;
+    for (;pos < srcLen;pos++)
+    {
+        for (h = 0;h < schLen;h++)
+        {
+            if (source[pos] == search[h])
+            {
+                for (start = pos+1, end = srcLen-start, i = 0;i < end;i++)
+                    source[pos+i] = source[start+i];
+                srcLen--;
+                removals++;
+            }
+        }
+    }
+    if (removals)
+        source[srcLen] = '\0';
+    return removals;
+}
+
+// Erases len characters from str starting at pos.
+// If len is -1 all characters starting at pos are erased.
+// Returns the number of characters erased.
+// Doesn't actually erase any characters, simply shifts the remaining down
+//   and inserts the null terminator.
+stock StrErase(String:str[], pos, len = -1)
+{
+    new strLen = strlen(str);
+    if ((len == 0) || (pos > strLen)) // Nothing to erase.
+        return 0;
+    if ((len < 0) || ((strLen-pos) < len))
+    {
+        str[pos] = '\0';
+        return strLen-pos;
+    }
+    for (new start = pos+len, end = strLen-start, i = 0;i < end;i++)
+        str[pos+i] = str[start+i];
+    str[strLen-len] = '\0';
+    return len;
+}
+
+// Test if a string is (or begins with) a digit.
+// Returns the position in str at the last character in the sequence of
+//   leading digits or -1 if str does not begin with a digit.
+//  StrIsDigit("42\0") will return 1
+//  StrIsDigit("-5foo\0") will return 1
+//  StrIsDigit("null5\0") will return -1
+//  StrIsDigit("-null5\0") will return -1
+//  StrIsDigit("1\0") will return 0
+// Undefined behaviour if the string is not null terminated.
+stock StrIsDigit(const String:str[])
+{
+    new strLen = strlen(str);
+    if (strLen == 0)
+        return -1;
+    new pos = 0;
+    new bool:neg = false;
+    if (str[0] == '-')
+    {
+        pos++;
+        neg = true;
+    }
+    new num;
+    for (;pos < strLen;pos++)
+    {
+        num = str[pos]-48;
+        if ((num < 0) || (num > 9))
+        {
+            pos--;
+            break;
+        }
+    }
+    if ((neg) && ((pos == 0) || (strLen < 2)))
+        return -1;
+    else
+        return pos;
+}
+
+// Swaps the contents of str0 and str1
+// If one string is larger than the other, then UB may occur.
+stock StrSwap(String:str0[], String:str1[])
+{
+    decl String:temp[1];
+    decl size[2];
+    size[0] = strlen(str0)+1;
+    size[1] = strlen(str1)+1;
+    if (size[1] > size[0])
+        size[0] = size[1];
+    for (new i = 0;i <= size[0];i++)
+    {
+        temp[0] = str0[i];
+        str0[i] = str1[i];
+        str1[i] = temp[0];
+    }
+}
+
+stock SayText2(author_index , const String:message[] ) 
+{
+    new Handle:buffer = StartMessageAll("SayText2");
+    if (buffer != INVALID_HANDLE)
+    {
+        BfWriteByte(buffer, author_index);
+        BfWriteByte(buffer, true);
+        BfWriteString(buffer, message);
+        EndMessage();
+    }
+}
+
+stock SayText2One( client_index , author_index , const String:message[] ) 
+{
+    new Handle:buffer = StartMessageOne("SayText2", client_index);
+    if (buffer != INVALID_HANDLE)
+    {
+        BfWriteByte(buffer, author_index);
+        BfWriteByte(buffer, true);
+        BfWriteString(buffer, message);
+        EndMessage();
+    }
+}
+
+stock RespondToCommand(client, const String:msg[], any:...)
+{
+    decl String:fmsg[250];
+    VFormat(fmsg,250,msg,3);
+    if (client != 0)
+        ReplyToCommand(client,fmsg);
+    else
+        PrintToServer(fmsg);
+}
+
+stock CRespondToCommand(client, const String:msg[], any:...)
+{
+    decl String:fmsg[250];
+    VFormat(fmsg,250,msg,3);
+    if (client != 0)
+    {
+        Format(fmsg,250,"%s",fmsg);
+        SayText2One(client,client,fmsg);
+    }
+    else
+    {
+        StrRemoveAllOf(fmsg,"");
+        PrintToServer(fmsg);
+    }
+}
+
+stock CPrintToServer(const String:msg[], any:...)
+{
+    decl String:fmsg[MAXCMDLEN];
+    VFormat(fmsg,MAXCMDLEN,msg,2);
+    StrRemoveAllOf(fmsg,"");
+    PrintToServer(fmsg);
+}
+
+stock orFlag(&flags, flag)
+{
+    if (64 < flag < 91) // if uppercase
+        flag += 32;     //    convert to lowercase
+    switch (flag)
+    {
+        case 'a':   flags |= ADMFLAG_RESERVATION;
+		case 'b':   flags |= ADMFLAG_GENERIC;
+		case 'c':   flags |= ADMFLAG_KICK;
+		case 'd':   flags |= ADMFLAG_BAN;
+		case 'e':   flags |= ADMFLAG_UNBAN;
+		case 'f':   flags |= ADMFLAG_SLAY;
+		case 'g':   flags |= ADMFLAG_CHANGEMAP;
+		case 'h':   flags |= ADMFLAG_CONVARS;
+		case 'i':   flags |= ADMFLAG_CONFIG;
+		case 'j':   flags |= ADMFLAG_CHAT;
+		case 'k':   flags |= ADMFLAG_VOTE;
+		case 'l':   flags |= ADMFLAG_PASSWORD;
+		case 'm':   flags |= ADMFLAG_RCON;
+		case 'n':   flags |= ADMFLAG_CHEATS;
+		case 'o':   flags |= ADMFLAG_CUSTOM1;
+		case 'p':   flags |= ADMFLAG_CUSTOM2;
+		case 'q':   flags |= ADMFLAG_CUSTOM3;
+		case 'r':   flags |= ADMFLAG_CUSTOM4;
+		case 's':   flags |= ADMFLAG_CUSTOM5;
+		case 't':   flags |= ADMFLAG_CUSTOM6;
+		case 'z':   flags |= ADMFLAG_ROOT;
+    } // any other characters are ignored
+}
+
+stock bool:handleClientAccess(client, any:flags)
+{
+    if (client > 0)
+    {
+        new flagBits = GetUserFlagBits(client);
+        if (((flagBits & ADMFLAG_ROOT) == 0) && ((flagBits & flags) != flags))
+        {
+            ReplyToCommand(client,"[SM] You do not have access to this command.");
+            return false;
+        }
+    }
+    return true;
+}
+
+// Thanks to GottZ for this: https://sm.alliedmods.net/api/index.php?fastload=show&id=398&
+stock GetRealClientCount(bool:inGameOnly = true)
+{
+    new clients = 0;
+    for (new i = 1; i <= GetMaxClients(); i++)
+    {
+        if (((inGameOnly) ? IsClientInGame(i) : IsClientConnected(i)) && !IsFakeClient(i))
+        {
+            clients++;
+        }
+    }
+    return clients;
+}
+
+// Borrowed from pumpkin.sp by linux_lover aka pheadxdll: https://forums.alliedmods.net/showthread.php?p=976177
+// From pheadxdll: "Credits to Spaz & Arg for the positioning code. Taken from FuncommandsX."
+// Slightly modified to remove globals.
+stock bool:SetTeleportEndPoint(client, Float:pos[3])
+{
+	decl Float:vAngles[3];
+	decl Float:vOrigin[3];
+	decl Float:vBuffer[3];
+	decl Float:vStart[3];
+	decl Float:Distance;
+	
+	GetClientEyePosition(client,vOrigin);
+	GetClientEyeAngles(client, vAngles);
+	
+    //get endpoint for teleport
+	new Handle:trace = TR_TraceRayFilterEx(vOrigin, vAngles, MASK_SHOT, RayType_Infinite, TraceEntityFilterPlayer);
+
+	if(TR_DidHit(trace))
+	{   	 
+   	 	TR_GetEndPosition(vStart, trace);
+		GetVectorDistance(vOrigin, vStart, false);
+		Distance = -35.0;
+   	 	GetAngleVectors(vAngles, vBuffer, NULL_VECTOR, NULL_VECTOR);
+		pos[0] = vStart[0] + (vBuffer[0]*Distance);
+		pos[1] = vStart[1] + (vBuffer[1]*Distance);
+		pos[2] = vStart[2] + (vBuffer[2]*Distance);
+	}
+	else
+	{
+		CloseHandle(trace);
+		return false;
+	}
+	
+	CloseHandle(trace);
+	return true;
+}
+
+public bool:TraceEntityFilterPlayer(entity, contentsMask)
+{
+	return entity > GetMaxClients() || !entity;
+}
 
 new Handle:c_enable = INVALID_HANDLE;
 new Handle:c_respawnTime = INVALID_HANDLE;
@@ -98,330 +472,6 @@ new g_basicFlag = ADMFLAG_CONFIG;
 new g_createFlag = ADMFLAG_RCON;
 new g_extendedFlag = ADMFLAG_RCON;
 
-public OnPluginStart()
-{
-    LoadTranslations("common.phrases");
-    CreateConVar("sm_mrw_version", VERSION, "Map Rewards Version",FCVAR_SPONLY|FCVAR_REPLICATED|FCVAR_NOTIFY|FCVAR_DONTRECORD);
-    
-    c_enable = CreateConVar("sm_mrw_enable", "1.0", "0 = disabled. 1 = enabled", 0, true, 0.0, true, 1.0);
-    c_respawnTime = CreateConVar("sm_mrw_respawn_time", "5.0", "Default seconds until a reward will respawn.", 0, true, 0.0);
-    c_cleanUp = CreateConVar("sm_mrw_cleanup", "8", "When to release and kill all rewards. OR desired values together. 0: never, 1: plugin end, 2: map start, 4: round start, 8: on auto load, 16: on manual load", 0, true, 0.0, true, 31.0);
-    c_autoLoad = CreateConVar("sm_mrw_autoload", "2", "When to auto load map or server cfg saves. OR desired values together. 0: never, 1: map start (maprewards/server.cfg), 2: map start (maprewards/<map>.cfg), 4: round start (maprewards/<map>.cfg), 8: round start (maprewards/server.cfg)", 0, true, 0.0, true, 7.0);
-    c_autoSave = CreateConVar("sm_mrw_autosave", "0", "When to auto save map cfg. OR desired values together. 0: never 1: plugin end, 2: map start (basically map end; internal data is still intact until cleanup), 4: round start (basically round end), 8: on clean up, 16: on every edit/addition that's not from the server, 32: on remove, 64: always backup first", 0, true, 0.0, true, 127.0);
-    c_basicFlag = CreateConVar("sm_mrw_flag_basic", "i", "Admin flag required for basic mrw commands.", 0);
-    c_createFlag = CreateConVar("sm_mrw_flag_create", "m", "Admin flag required for creating or modifying rewards.", 0);
-    c_extendedFlag = CreateConVar("sm_mrw_flag_extended", "m", "Admin flag required for all sm_mrw_cfg_* commands except for load and list.", 0);
-
-    RegConsoleCmd("sm_mrw_info", infoSpawnPoint, "Displays info about a specific reward spawn point.");
-    RegConsoleCmd("sm_mrw_add", addSpawnPoint, "Sets a spawn point on the map for a reward.");
-    RegConsoleCmd("sm_mrw_add_custom", addSpawnPointCustom, "DEPRECIATED! Sets a custom entity spawn point on the map for a reward.");
-    RegConsoleCmd("sm_mrw_modify", modifySpawnPoint, "Modify a reward spawn point.");
-    RegConsoleCmd("sm_mrw_remove", removeSpawnPoint, "Removes a reward on the map (starting with 0, not 1).");
-    RegConsoleCmd("sm_mrw_removeall", removeSpawnPoints, "Removes all rewards on the map.");
-    RegConsoleCmd("sm_mrw_model_reload", reloadAlias, "Reloads 'cfg/maprewards/aliases.cfg'.");
-    RegConsoleCmd("sm_mrw_model_add", addAlias, "Adds a model alias. Does not save.");
-    RegConsoleCmd("sm_mrw_model_save", saveAlias, "Saves the current model aliases to 'cfg/maprewards/aliases.cfg'.");
-    RegConsoleCmd("sm_mrw_model_list", listAlias, "Lists all current model aliases.");
-    RegConsoleCmd("sm_mrw_script_reload", reloadScript, "Reloads 'cfg/maprewards/scripts.cfg'.");
-    RegConsoleCmd("sm_mrw_script_add", addScript, "Adds a script alias. Does not save.");
-    RegConsoleCmd("sm_mrw_script_save", saveScript, "Saves the current scripts to 'cfg/maprewards/scripts.cfg'.");
-    RegConsoleCmd("sm_mrw_script_list", listScript, "Lists all current scripts.");
-    RegConsoleCmd("sm_mrw_cfg_save", writeCFG, "Saves current reward spawn points to a cfg file for later reuse.");
-    RegConsoleCmd("sm_mrw_cfg_load", loadCFG, "Loads a saved maprewards cfg file.");
-    RegConsoleCmd("sm_mrw_cfg_list", listSavedCFG, "Lists all saved maprewards cfg files.");
-    RegConsoleCmd("sm_mrw_cfg_delete", deleteSavedCFG, "Deletes a saved maprewards cfg file.");
-    RegConsoleCmd("sm_mrw_cfg_purge", purgeSavedCFG, "Deletes all auto-save backup maprewards cfg files.");
-    RegConsoleCmd("sm_mrw_tp", tpPlayer, "Teleports you to the provided reward.");
-    RegConsoleCmd("sm_mrw_move", moveReward, "Relatively moves a reward.");
-    RegConsoleCmd("sm_mrw_turn", turnReward, "Relatively rotates a reward.");
-    RegConsoleCmd("sm_mrw_copy", copyReward, "Creates an exact copy of a reward at the provided position.");
-    RegConsoleCmd("sm_mrw_copy_here", copyRewardHere, "Creates an exact copy of a reward at your position.");
-    RegConsoleCmd("sm_mrw_release", releaseReward, "Releases a reward from local memory. WARNING YOU WILL NOT BE ABLE TO ALTER OR SAVE ANY RELEASED ENTITIES.");
-    RegConsoleCmd("sm_mrw_kill", killEntity, "Kills an entity by its edict ID. To be used with entities after releasing them.");
-    RegConsoleCmd("sm_mrw_respawn", manuallyRespawnReward, "Respawn or reactivate a reward early.");
-    RegConsoleCmd("sm_mrw_trigger", mapRewardTrigger, "Triggers a reward remotely.");
-    RegAdminCmd("sm_exec2", exec2CFG, ADMFLAG_SLAY, "Executes a cfg file provided as the second argument. Accepts a first argument, but is ignored unless the third argument is '0'. If the third argument is anything else, it will be used instead of the player's name. Any additional arguments will be used instead of the default message.");
-    RegAdminCmd("sm_teleplus", teleportCmd, ADMFLAG_SLAY, "Teleport a player to a set of coordinates with optional rotation and velocity. Relative coords, angles, and velocity are allowed.");
-    
-    HookEvent("teamplay_round_start", OnRoundStart);//, EventHookMode_PostNoCopy);
-
-    HookConVarChange(c_enable, cvarEnableChange);
-    HookConVarChange(c_respawnTime, cvarChange);
-    HookConVarChange(c_cleanUp, cvarCleanChange);
-    HookConVarChange(c_autoLoad, cvarLoadChange);
-    HookConVarChange(c_autoSave, cvarSaveChange);
-    HookConVarChange(c_basicFlag, cvarBasicFlagChange);
-    HookConVarChange(c_createFlag, cvarCreateFlagChange);
-    HookConVarChange(c_extendedFlag, cvarExtendedFlagChange);
-    
-    aliasCount = loadAliases();
-    scriptCount = loadScripts();
-}
-
-stock RespondToCommand(client, const String:msg[], any:...)
-{
-    decl String:fmsg[250];
-    VFormat(fmsg,250,msg,3);
-    if (client != 0)
-        ReplyToCommand(client,fmsg);
-    else
-        PrintToServer(fmsg);
-}
-
-stock CRespondToCommand(client, const String:msg[], any:...)
-{
-    decl String:fmsg[250];
-    VFormat(fmsg,250,msg,3);
-    if (client != 0)
-        CPrintToChat(client,fmsg);
-    else
-    {
-        ReplaceString(fmsg,250,"{default}","");
-        ReplaceString(fmsg,250,"{green}","");
-        ReplaceString(fmsg,250,"{lightgreen}","");
-        ReplaceString(fmsg,250,"{red}","");
-        ReplaceString(fmsg,250,"{blue}","");
-        ReplaceString(fmsg,250,"{olive}","");
-        ReplaceString(fmsg,250,"{teamcolor}","");
-        PrintToServer(fmsg);
-    }
-}
-
-stock CPrintToServer(const String:msg[], any:...)
-{
-    decl String:fmsg[MAXCMDLEN];
-    VFormat(fmsg,MAXCMDLEN,msg,2);
-    ReplaceString(fmsg,MAXCMDLEN,"{default}","");
-    ReplaceString(fmsg,MAXCMDLEN,"{green}","");
-    ReplaceString(fmsg,MAXCMDLEN,"{lightgreen}","");
-    ReplaceString(fmsg,MAXCMDLEN,"{red}","");
-    ReplaceString(fmsg,MAXCMDLEN,"{blue}","");
-    ReplaceString(fmsg,MAXCMDLEN,"{olive}","");
-    ReplaceString(fmsg,MAXCMDLEN,"{teamcolor}","");
-    PrintToServer(fmsg);
-}
-
-public cvarCleanChange(Handle:convar, const String:oldValue[], const String:newValue[])
-{
-    g_cleanUp = StringToInt(newValue);
-}
-
-public cvarLoadChange(Handle:convar, const String:oldValue[], const String:newValue[])
-{
-    g_autoLoad = StringToInt(newValue);
-}
-
-public cvarSaveChange(Handle:convar, const String:oldValue[], const String:newValue[])
-{
-    g_autoSave = StringToInt(newValue);
-}
-
-public Action:teleportCmd(client, args)
-{
-    decl String:targetp[65];
-    new Float:coordsC[3][3];
-    new neededArgs = args;
-    new nextArg = 2;
-    if (args > 1)
-    {
-        GetCmdArg(1,targetp,65); // Thanks to C++ std::regex I'm superstitious about grabbing things out of order...
-        decl String:temp[8];
-        GetCmdArg(2,temp,8);     // Otherwise, this would be the only GetCmdArg call in this block
-        if (strcmp(temp,"@aim") == 0)
-        {
-            if ((client == 0) || (!IsClientInGame(client)))
-            {
-                RespondToCommand(client,"[SM] Error: You must be in game to use \"@aim\" coordinates.");
-                return Plugin_Handled;
-            }
-            SetTeleportEndPoint(client,coordsC[0]);
-            neededArgs += 2;
-            nextArg++;
-        }
-    }
-    if ((neededArgs != 4) && (neededArgs != 7) && (neededArgs != 10))
-    {
-        RespondToCommand(client,"[SM] Usage: sm_teleplus <#userid|name> <X Y Z> [RX RY RZ] [VX VY VZ]");
-        return Plugin_Handled;
-    }
-    decl String:target_name[MAX_TARGET_LENGTH];
-    decl target_list[MAXPLAYERS];
-    decl bool:tn_is_ml;
-    new target_count = 0;
-    if ((target_count = ProcessTargetString(targetp,client,target_list,MAXPLAYERS,COMMAND_FILTER_ALIVE,target_name,sizeof(target_name),tn_is_ml)) <= 0)
-    {
-        ReplyToTargetError(client,target_count);
-        return Plugin_Handled;
-    }
-    new Float:coordsO[3][3];
-    new bool:relative[3][3];
-    for (new h = nextArg-2;nextArg <= args;h++)
-    {
-        for (new i = 0;i < 3;i++)
-        {
-            GetCmdArg(nextArg++,targetp,16);
-            if (targetp[0] == '~')
-            {
-                relative[h][i] = true;
-                if (strlen(targetp) > 1)
-                {
-                    StrErase(targetp,0,1);
-                    coordsC[h][i] += StringToFloat(targetp);
-                }
-            }
-            else
-                coordsC[h][i] = StringToFloat(targetp);
-        }
-    }
-    for (new i = 0;i < target_count;i++)
-    {
-        GetClientAbsOrigin(target_list[i],coordsO[0]);
-        GetClientEyeAngles(target_list[i],coordsO[1]);
-        GetEntPropVector(target_list[i],Prop_Data,"m_vecVelocity",coordsO[2]);
-        for (new h = 0;h < 3;h++)
-            for (new o = 0;o < 3;o++)
-                if (relative[h][o])
-                    coordsC[h][o] += coordsO[h][o];
-        TeleportEntity(target_list[i], coordsC[0], coordsC[1], coordsC[2]);
-    }
-    return Plugin_Handled;
-}
-
-public Action:exec2CFG(client, args)
-{
-    if (args > 2)
-    {
-        decl String:targetp[65];
-        decl String:target_name[MAX_TARGET_LENGTH];
-        decl target_list[MAXPLAYERS];
-        decl bool:tn_is_ml;
-        GetCmdArg(1,targetp,65);
-        decl String:opt_name[MAX_TARGET_LENGTH];
-        GetCmdArg(3,opt_name,MAX_TARGET_LENGTH);
-        new String:msg[128];
-        if (args > 3)
-        {
-            decl String:buffer[128];
-            for (new i = 4; i <= args; i++)
-            {
-                GetCmdArg(i,buffer,128);
-                StrCat(msg,128,buffer);
-                StrCat(msg,128," ");
-            }
-        }
-        else
-        {
-            msg = "has earned a reward!";
-        }
-        if (strcmp(opt_name,"0") == 0)
-        {
-            if (ProcessTargetString(targetp,client,target_list,MAXPLAYERS,COMMAND_FILTER_ALIVE,target_name,sizeof(target_name),tn_is_ml) <= 0)
-                target_name = "Everyone";
-        }
-        else
-            target_name = opt_name;
-        CPrintToChatAll("%c%s%c %s",0x04,target_name,0x01,msg);
-        CPrintToServer("%s %s",target_name,msg);
-    }
-    if (args > 1)
-    {
-        decl String:cfg[MAXINPUT];
-        GetCmdArg(2,cfg,MAXINPUT);
-        ServerCommand("exec %s",cfg);
-    }
-    return Plugin_Handled;
-}
-
-public Action:listSavedCFG(client, args)
-{
-    if (!handleClientAccess(client,g_basicFlag))
-        return Plugin_Handled;
-    decl String:dir[128];
-    new bool:topdir = true;
-    dir = "cfg/maprewards/";
-    if (args > 0)
-    {
-        decl String:buffer[112];
-        GetCmdArg(1,buffer,112);
-        while ((buffer[0] == '/') || (buffer[0] == '\\'))
-            StrErase(buffer,0);
-        if (StrFind(buffer,"..") > -1)
-        {
-            RespondToCommand(client,"[SM] Error: Illegal path.");
-            return Plugin_Handled;
-        }
-        StrCat(dir,128,buffer);
-        topdir = false;
-    }
-    new Handle:cfgs = OpenDirectory(dir);
-    if (cfgs == INVALID_HANDLE)
-    {
-        RespondToCommand(client,"[SM] No saved CFG files found in '%s'.",dir);
-        RespondToCommand(client,"[SM] Usage: sm_mrw_cfg_list [directory] - directory starts in 'cfg/maprewards/'.");
-        return Plugin_Handled;
-    }
-    decl String:filename[128];
-    decl FileType:filetype;
-    new total = 0;
-    while (ReadDirEntry(cfgs,filename,128,filetype))
-    {
-        if ((filetype != FileType_File) || (strcmp(filename,".") == 0) || (strcmp(filename,"..") == 0) || ((topdir) && ((strcmp(filename,"scripts.cfg") == 0) || (strcmp(filename,"aliases.cfg") == 0))))
-            continue;
-        RespondToCommand(client,"[SM] [%d] '%s'",++total,filename);
-    }
-    RespondToCommand(client,"[SM] Found %d saves in '%s'.",total,dir);
-    return Plugin_Handled;
-}
-
-public Action:deleteSavedCFG(client, args)
-{
-    if (!handleClientAccess(client,g_extendedFlag))
-        return Plugin_Handled;
-    decl String:filename[128];
-    filename = "cfg/maprewards/";
-    if (args < 1)
-    {
-        RespondToCommand(client,"[SM] Usage: sm_mrw_cfg_delete <cfg_file> - Path starts in 'cfg/maprewards/'.");
-        return Plugin_Handled;
-    }
-    decl String:buffer[112];
-    GetCmdArg(1,buffer,112);
-    while ((buffer[0] == '/') || (buffer[0] == '\\'))
-        StrErase(buffer,0);
-    if (StrFind(buffer,"..") > -1)
-    {
-        RespondToCommand(client,"[SM] Error: Illegal path.");
-        return Plugin_Handled;
-    }
-    StrCat(filename,128,buffer);
-    if (!FileExists(filename))
-    {
-        RespondToCommand(client,"[SM] Error: '%s' file does not exist.",filename);
-        return Plugin_Handled;
-    }
-    if (DeleteFile(filename))
-        RespondToCommand(client,"[SM] Deleted '%s'.",filename);
-    else
-        RespondToCommand(client,"[SM] Error: Cannot delete file '%s'.",filename);
-    return Plugin_Handled;
-}
-
-public Action:purgeSavedCFG(client, args)
-{
-    if (!handleClientAccess(client,g_extendedFlag))
-        return Plugin_Handled;
-    if (DirExists("cfg/maprewards/backup"))
-    {
-        if (RemoveDir("cfg/maprewards/backup"))
-            RespondToCommand(client,"[SM] Successfully purged all backup maprewards cfg files.");
-        else
-            RespondToCommand(client,"[SM] Error: Unable to delete 'cfg/maprewards/backup/'.");
-    }
-    else
-        RespondToCommand(client,"[SM] No backups to purge.");
-    return Plugin_Handled;
-}
-
 stock bool:isValidReward(id)
 {
     if ((-1 < id < MAXSPAWNPOINT) && (strlen(entType[id]) > 0))
@@ -436,531 +486,6 @@ getNewestReward()
             if (isValidReward(newestReward))
                 break;
     return newestReward;
-}
-
-public Action:releaseReward(client, args)
-{
-    if (!handleClientAccess(client,g_basicFlag))
-        return Plugin_Handled;
-    if (args < 1)
-    {
-        RespondToCommand(client,"[SM] Usage: sm_mrw_release <#id|name>");
-        return Plugin_Handled;
-    }
-    decl String:buffer[MAXINPUT];
-    GetCmdArg(1,buffer,MAXINPUT);
-    new bool:list[MAXSPAWNPOINT];
-    decl oldID;
-    if (getRewardList(buffer,list,client))
-    {
-        for (new tempID = 0;tempID < MAXSPAWNPOINT;tempID++)
-        {
-            if (list[tempID])
-            {
-                /*decl String:cmdC[1024];
-                buildRewardCmd(tempID,cmdC,1024);
-                if (client == 0)
-                    PrintToServer("[MRW] %s",cmdC);
-                else
-                    PrintToConsole(client, "[MRW] %s",cmdC);*/
-                if (spawnEnts[tempID] == -1)
-                    spawnReward(tempID);
-                oldID = spawnEnts[tempID];
-                resetReward(tempID);
-                RespondToCommand(client,"[SM] Successfully released reward #%d(%d)",tempID,oldID);
-                    //RespondToCommand(client,"[SM] Check your console incase you need it back ;) If you need to remove it, the entity ID is #%d.",oldID);
-            }
-        }
-        if (client != 0)
-            autoSave(SAVE_EDIT,true);
-        getNewestReward();
-    }
-    else
-        RespondToCommand(client, "[SM] Error: Found no rewards matching '%s'",buffer);
-    return Plugin_Handled;
-}
-
-public Action:copyReward(client, args)
-{
-    if (!handleClientAccess(client,g_createFlag))
-        return Plugin_Handled;
-    switch (args)
-    {
-        case 4,7,8,9:
-        {
-            decl String:buffer[64];
-            GetCmdArg(1,buffer,64);
-            new tempID = getRewardID(buffer,client);
-            if (!isValidReward(tempID))
-            {
-                RespondToCommand(client, "[SM] Error: Unknown reward '%s'",buffer);
-                return Plugin_Handled;
-            }
-            new spawnPoints = newEnt();
-            if (spawnPoints >= MAXSPAWNPOINT)
-            {
-                RespondToCommand(client, "[SM] No more room for rewards! :( Use sm_mrw_removeall to reset.");
-                return Plugin_Handled;
-            }
-            new nextArg = 2;
-            defSpawnAngles[spawnPoints] = defSpawnAngles[tempID];
-            for (new i = 0;i < 3;i++)
-            {
-                GetCmdArg(nextArg++,buffer,64);
-                defSpawnCoords[spawnPoints][i] = defSpawnCoords[tempID][i] + StringToInt(buffer);
-            }
-            if (nextArg < args)
-            {
-                for (new i = 0;i < 3;i++)
-                {
-                    GetCmdArg(nextArg++,buffer,64);
-                    defSpawnAngles[spawnPoints][i] += StringToInt(buffer);
-                }
-            }
-            model[spawnPoints] = model[tempID];
-            rCommand[spawnPoints][0] = rCommand[tempID][0];
-            rCommand[spawnPoints][1] = rCommand[tempID][1];
-            entType[spawnPoints] = entType[tempID];
-            script[spawnPoints][1] = script[tempID][1];
-            respawnMethod[spawnPoints] = respawnMethod[tempID];
-            respawnTime[spawnPoints] = respawnTime[tempID];
-            entSpin[spawnPoints] = entSpin[tempID];
-            entSpinInt[spawnPoints] = entSpinInt[tempID];
-            unEvaluate[spawnPoints] = unEvaluate[tempID];
-            if (args > 7)
-                GetCmdArg(8,entName[spawnPoints],32);
-            else
-                IntToString(spawnPoints,entName[spawnPoints],32);
-            if (args > 8)
-            {
-                GetCmdArg(9,buffer,64);
-                if (strcmp(buffer,"0") != 0)
-                {
-                    for (new i = 0;i < scriptCount;i++)
-                    {
-                        if (strcmp(buffer,scripts[i][0]) == 0)
-                        {
-                            strcopy(buffer,64,scripts[i][1]);
-                            break;
-                        }
-                    }
-                }
-                script[spawnPoints][0] = buffer;
-            }
-            else
-                script[spawnPoints][0] = script[tempID][0];
-            if (g_enable)
-                spawnReward(spawnPoints);
-            if (client != 0)
-                autoSave(SAVE_EDIT,true);
-            RespondToCommand(client, "[SM] Added reward spawn point #%d", spawnPoints);
-        }
-        default:
-        {
-            RespondToCommand(client,"[SM] Usage: sm_mrw_copy <#id|name> <X Y Z> [RX RY RZ] [new_name] [new_script]");
-            return Plugin_Handled;
-        }
-    }
-    return Plugin_Handled;
-}
-
-public Action:copyRewardHere(client, args)
-{
-    if (!handleClientAccess(client,g_createFlag))
-        return Plugin_Handled;
-    if (args < 1)
-    {
-        RespondToCommand(client,"[SM] Usage: sm_mrw_copy_here <#id|name> [new_name] [new_script]");
-        return Plugin_Handled;
-    }
-    decl String:buffer[64];
-    GetCmdArg(1,buffer,64);
-    new tempID = getRewardID(buffer,client);
-    if (!isValidReward(tempID))
-    {
-        RespondToCommand(client, "[SM] Error: Unknown reward '%s'",buffer);
-        return Plugin_Handled;
-    }
-    new spawnPoints = newEnt();
-    if (spawnPoints >= MAXSPAWNPOINT)
-    {
-        RespondToCommand(client, "[SM] No more room for rewards! :( Use sm_mrw_removeall to reset.");
-        return Plugin_Handled;
-    }
-    if (args > 1)
-        GetCmdArg(2,entName[spawnPoints],32);
-    else
-        IntToString(spawnPoints,entName[spawnPoints],32);
-    if (args > 2)
-    {
-        GetCmdArg(2,buffer,64);
-        if (strcmp(buffer,"0") != 0)
-        {
-            for (new i = 0;i < scriptCount;i++)
-            {
-                if (strcmp(buffer,scripts[i][0]) == 0)
-                {
-                    strcopy(buffer,64,scripts[i][1]);
-                    break;
-                }
-            }
-        }
-        script[spawnPoints][0] = buffer;
-    }
-    else
-        script[spawnPoints][0] = script[tempID][0];
-    if ((client > 0) && (IsClientInGame(client)))
-        GetClientAbsOrigin(client,defSpawnCoords[spawnPoints]);
-    else
-        defSpawnCoords[spawnPoints] = defSpawnCoords[tempID];
-    defSpawnAngles[spawnPoints] = defSpawnAngles[tempID];
-    model[spawnPoints] = model[tempID];
-    rCommand[spawnPoints][0] = rCommand[tempID][0];
-    rCommand[spawnPoints][1] = rCommand[tempID][1];
-    script[spawnPoints][1] = script[tempID][1];
-    entType[spawnPoints] = entType[tempID];
-    respawnMethod[spawnPoints] = respawnMethod[tempID];
-    respawnTime[spawnPoints] = respawnTime[tempID];
-    entSpin[spawnPoints] = entSpin[tempID];
-    entSpinInt[spawnPoints] = entSpinInt[tempID];
-    unEvaluate[spawnPoints] = unEvaluate[tempID];
-    if (g_enable)
-        spawnReward(spawnPoints);
-    if (client != 0)
-        autoSave(SAVE_EDIT,true);
-    RespondToCommand(client, "[SM] Added reward spawn point #%d", spawnPoints);
-    return Plugin_Handled;
-}
-
-public Action:moveReward(client, args)
-{
-    if (!handleClientAccess(client,g_basicFlag))
-        return Plugin_Handled;
-    new bool:needsArgs = true;
-    decl String:buffer[MAXINPUT];
-    decl String:strCoords[16];
-    decl Float:cCoords[3];
-    if (args > 1)
-    {
-        GetCmdArg(1,buffer,MAXINPUT);
-        GetCmdArg(2,strCoords,16);
-        if (strcmp(strCoords[0],"@aim") == 0)
-        {
-            if ((client == 0) || (!IsClientInGame(client)))
-            {
-                RespondToCommand(client,"[SM] Error: You must be in game to use \"@aim\" coordinates.");
-                return Plugin_Handled;
-            }
-            SetTeleportEndPoint(client,cCoords);
-            needsArgs = false;
-        }
-        else
-            cCoords[0] = StringToFloat(strCoords);
-    }
-    if (needsArgs)
-    {
-        if (args < 4)
-        {
-            RespondToCommand(client,"[SM] Usage: sm_mrw_move <#id|name> <X Y Z>");
-            return Plugin_Handled;
-        }
-        GetCmdArg(3,strCoords,16);
-        cCoords[1] = StringToFloat(strCoords);
-        GetCmdArg(4,strCoords,16);
-        cCoords[2] = StringToFloat(strCoords);
-    }
-    new bool:list[MAXSPAWNPOINT];
-    if (!getRewardList(buffer,list,client))
-        RespondToCommand(client, "[SM] Found no rewards matching '%s'",buffer);
-    else
-    {
-        for (new i = 0;i < MAXSPAWNPOINT;i++)
-        {
-            if (list[i])
-            {
-                defSpawnCoords[i][0] += cCoords[0];
-                defSpawnCoords[i][1] += cCoords[1];
-                defSpawnCoords[i][2] += cCoords[2];
-                if (IsValidEntity(spawnEnts[i]))
-                    TeleportEntity(spawnEnts[i], defSpawnCoords[i], defSpawnAngles[i], NULL_VECTOR);
-                RespondToCommand(client, "[SM] Moved reward #%d.",i);
-            }
-        }
-        if (client != 0)
-            autoSave(SAVE_EDIT,true);
-    }
-    return Plugin_Handled;
-}
-
-public Action:turnReward(client, args)
-{
-    if (!handleClientAccess(client,g_basicFlag))
-        return Plugin_Handled;
-    if (args < 4)
-    {
-        RespondToCommand(client,"[SM] Usage: sm_mrw_turn <#id|name> <RX RY RZ>");
-        return Plugin_Handled;
-    }
-    decl String:buffer[MAXINPUT];
-    GetCmdArg(1,buffer,MAXINPUT);
-    new bool:list[MAXSPAWNPOINT];
-    if (!getRewardList(buffer,list,client))
-    {
-        RespondToCommand(client, "[SM] Error: Found no rewards matching '%s'",buffer);
-        return Plugin_Handled;
-    }
-    decl Float:angles[3];
-    for (new i = 0;i < 3;i++)
-    {
-        GetCmdArg(2+i,buffer,16);
-        angles[i] = StringToFloat(buffer);
-    }
-    for (new tempID = 0;tempID < MAXSPAWNPOINT;tempID++)
-    {
-        if (list[tempID])
-        {
-            defSpawnAngles[tempID][0] = float(RoundToFloor(defSpawnAngles[tempID][0] + angles[0]) % 360);
-            defSpawnAngles[tempID][1] = float(RoundToFloor(defSpawnAngles[tempID][1] + angles[1]) % 360);
-            defSpawnAngles[tempID][2] = float(RoundToFloor(defSpawnAngles[tempID][2] + angles[2]) % 360);
-            if (IsValidEntity(spawnEnts[tempID]))
-                TeleportEntity(spawnEnts[tempID], defSpawnCoords[tempID], defSpawnAngles[tempID], NULL_VECTOR);
-        }
-    }
-    if (client != 0)
-        autoSave(SAVE_EDIT,true);
-    return Plugin_Handled;
-}
-
-public Action:tpPlayer(client, args)
-{
-    if (!handleClientAccess(client,g_basicFlag))
-        return Plugin_Handled;
-    if (args < 1)
-    {
-        RespondToCommand(client,"[SM] Usage: sm_mrw_tp <#id|name> [#userid|name] [X Y Z] [RX RY RZ] [VX VY VZ]");
-        return Plugin_Handled;
-    }
-    decl String:target[32];
-    decl String:target_name[MAX_NAME_LENGTH];
-    decl target_list[MAXPLAYERS];
-    decl target_count;
-    decl bool:tn_is_ml;
-    GetCmdArg(1,target,32);
-    new tempID = getRewardID(target,client);
-    if (!isValidReward(tempID))
-    {
-        RespondToCommand(client, "[SM] Error: Unknown reward '%s'",target);
-        return Plugin_Handled;
-    }
-    new Float:rCoords[4][3];
-    if (IsValidEntity(spawnEnts[tempID]))
-    {
-        GetEntPropVector(spawnEnts[tempID],Prop_Data,"m_vecOrigin",rCoords[0]);
-        GetEntPropVector(spawnEnts[tempID],Prop_Data,"m_angRotation",rCoords[1]);
-    }
-    else
-    {
-        rCoords[0] = defSpawnCoords[tempID];
-        rCoords[1] = defSpawnAngles[tempID];
-    }
-    new bool:relativeV[4];
-    new nextArg = 2;
-    switch (args)
-    {
-        case 1, 4, 7, 10:
-        {
-            target_list[0] = client;
-            target_count = 1;
-        }
-        case 2, 5, 8, 11:
-        {
-            GetCmdArg(nextArg++,target,32);        
-            if ((target_count = ProcessTargetString(
-                    target,
-                    client,
-                    target_list,
-                    MAXPLAYERS,
-                    COMMAND_FILTER_ALIVE,
-                    target_name,
-                    sizeof(target_name),
-                    tn_is_ml)) <= 0)
-            {
-                ReplyToTargetError(client, target_count);
-                return Plugin_Handled;
-            }
-        }
-        default:
-        {
-            RespondToCommand(client,"[SM] Usage: sm_mrw_tp <#id|name> [#userid|name] [X Y Z] [RX RY RZ] [VX VY VZ]");
-            return Plugin_Handled;
-        }
-    }
-    decl String:temp[16];
-    for (new h = 0;nextArg <= args;h++)
-    {
-        for (new i = 0;i < 3;i++)
-        {
-            GetCmdArg(nextArg++,temp,16);
-            if (temp[0] == '~')
-            {
-                if (h == 2)
-                    relativeV[3] = relativeV[i] = true;
-                if (strlen(temp) > 1)
-                {
-                    StrErase(temp,0,1);
-                    rCoords[h][i] += StringToFloat(temp);
-                }
-            }
-            else
-                rCoords[h][i] = StringToFloat(temp);
-        }
-    }
-    rCoords[3] = rCoords[2];
-    for (new i = 0;i < target_count;i++)
-    {
-        if (relativeV[3])
-        {
-            GetEntPropVector(target_list[i],Prop_Data,"m_vecVelocity",rCoords[3]);
-            for (new h = 0;h < 3;h++)
-                if (relativeV[h])
-                    rCoords[3][h] += rCoords[2][h];
-        }
-        TeleportEntity(target_list[i], rCoords[0], rCoords[1], rCoords[3]);
-    }
-    return Plugin_Handled;
-}
-
-stock buildRewardCmd(index, String:cmdC[], cmdSize, bool:relative = false, const Float:originC[3] = { 0.0, 0.0, 0.0 })
-{
-    decl Float:coordsC[3];
-    coordsC = defSpawnCoords[index];
-    if (relative)
-    {
-        for (new i = 0;i < 3;i++)
-            coordsC[i] -= originC[i];
-        Format(cmdC,cmdSize,"sm_mrw_add -c ~%f ~%f ~%f",coordsC[0],coordsC[1],coordsC[2]);
-    }
-    else
-        Format(cmdC,cmdSize,"sm_mrw_add -c %f %f %f",coordsC[0],coordsC[1],coordsC[2]);
-    if ((defSpawnAngles[index][0] != 0.0) || (defSpawnAngles[index][1] != 0.0) || (defSpawnAngles[index][2] != 0.0))
-        Format(cmdC,cmdSize,"%s -r %f %f %f",cmdC,defSpawnAngles[index][0],defSpawnAngles[index][1],defSpawnAngles[index][2]);
-    if (strcmp(entType[index],"prop_physics_override") != 0)
-        Format(cmdC,cmdSize,"%s -e %s",cmdC,entType[index]);
-    if (strlen(model[index]) > 0)
-        Format(cmdC,cmdSize,"%s -m %s",cmdC,model[index]);
-    if (((index > 0) && (StringToInt(entName[index]) != index)) || ((index == 0) && (strcmp(entName[index],"0") != 0)))
-        Format(cmdC,cmdSize,"%s -n %s",cmdC,entName[index]);
-    if (strlen(script[index][0]) > 0)
-        Format(cmdC,cmdSize,"%s -s %s",cmdC,script[index][0]);
-    if (strlen(script[index][1]) > 0)
-        Format(cmdC,cmdSize,"%s -p %s",cmdC,script[index][1]);
-    if (entSpinInt[index] > 0.0)
-        Format(cmdC,cmdSize,"%s -T %f %f %f %.1f",cmdC,entSpin[index][0],entSpin[index][1],entSpin[index][2],entSpinInt[index]);
-    if (unEvaluate[index])
-        Format(cmdC,cmdSize,"%s -U",cmdC);
-    if (entOverlay[index] != FULLSPECTRUM)
-        Format(cmdC,cmdSize,"%s -L %d",cmdC,entOverlay[index]);
-    if (respawnMethod[index] != HOOK_NOHOOK)
-    {
-        Format(cmdC,cmdSize,"%s -d %i",cmdC,(respawnMethod[index] & ~HOOK_DEACTIVE));
-        if (respawnTime[index] >= 0.0)
-            Format(cmdC,cmdSize,"%s -t %.2f",cmdC,respawnTime[index]);
-        if (entHealth[index] > 0.0)
-            Format(cmdC,cmdSize,"%s -A %.2f",cmdC,entHealth[index]);
-        if ((strlen(rCommand[index][0]) > 0) && (strcmp(rCommand[index][0],"null") != 0))
-        {
-            Format(cmdC,cmdSize,"%s \"%s\"",cmdC,rCommand[index][0]);
-            if (strlen(rCommand[index][1]) > 0)
-                Format(cmdC,cmdSize,"%s\nsm_mrw_modify -1 -X \"%s\"",cmdC,rCommand[index][1]);
-        }
-        else if (strlen(rCommand[index][1]) > 0)
-            Format(cmdC,cmdSize,"%s -X \"%s\"",cmdC,rCommand[index][1]);
-    }
-}
-
-public Action:infoSpawnPoint(client, args)
-{
-    if (!handleClientAccess(client,g_basicFlag))
-        return Plugin_Handled;
-    if (args < 1)
-    {
-        RespondToCommand(client,"[SM] Usage: sm_mrw_info <#id|name>");
-        return Plugin_Handled;
-    }
-    decl String:buffer[32];
-    GetCmdArg(1,buffer,32);
-    new tempID = getRewardID(buffer,client);
-    if (!isValidReward(tempID))
-    {
-        RespondToCommand(client, "[SM] Unknown reward '%s'",buffer);
-        return Plugin_Handled;
-    }
-    decl String:cmdC[MAXCMDLEN];
-    buildRewardCmd(tempID,cmdC,MAXCMDLEN);
-    RespondToCommand(client,"[SM] Info on #%d(%d): X=%.1f Y=%.1f Z=%.1f RX=%.1f RY=%.1f RZ=%.1f",tempID,spawnEnts[tempID],defSpawnCoords[tempID][0],defSpawnCoords[tempID][1],defSpawnCoords[tempID][2],defSpawnAngles[tempID][0],defSpawnAngles[tempID][1],defSpawnAngles[tempID][2]);
-    RespondToCommand(client,"[SM] Model: %s",model[tempID]);
-    if (strlen(rCommand[tempID][0]) > 0)
-        RespondToCommand(client,"[SM] Touch Command: %s",rCommand[tempID][0]);
-    if (strlen(rCommand[tempID][1]) > 0)
-        RespondToCommand(client,"[SM] Kill Command: %s",rCommand[tempID][1]);
-    RespondToCommand(client,"[SM] Spawn scripts: [%s] [%s]",script[tempID][0],script[tempID][1]);
-    RespondToCommand(client,"[SM] %s",cmdC);
-    return Plugin_Handled;
-}
-
-public Action:listAlias(client, args)
-{
-    if (!handleClientAccess(client,g_basicFlag))
-        return Plugin_Handled;
-    for (new i = 0;i < aliasCount;i++)
-        RespondToCommand(client,"[SM] #%d: '%s' = '%s' (%s) : '%s' : '%s'",i,aliases[i][0],aliases[i][1],aliases[i][2],aliases[i][3],aliases[i][4]);
-    return Plugin_Handled;
-}
-
-public Action:reloadAlias(client, args)
-{
-    if (!handleClientAccess(client,g_basicFlag))
-        return Plugin_Handled;
-    aliasCount = loadAliases();
-    RespondToCommand(client,"[SM] Successfully loaded %d aliases.",aliasCount);
-    return Plugin_Handled;
-}
-
-public Action:addAlias(client, args)
-{
-    if (!handleClientAccess(client,g_basicFlag))
-        return Plugin_Handled;
-    if (args < 2)
-    {
-        RespondToCommand(client, "[SM] Usage: sm_mrw_model_add <name> <model> [entity_type] [overridescript] [entity_properties]");
-        return Plugin_Handled;
-    }
-    decl String:buffer[MAXINPUT];
-    GetCmdArg(1, buffer, MAXINPUT);
-    strcopy(aliases[aliasCount][0],MAXINPUT,buffer);
-    new marg = args;
-    if (marg > 5)
-        marg = 5;
-    for (new i = 2;i <= marg;i++)
-    {
-        GetCmdArg(i, buffer, sizeof(buffer));
-        if ((strcmp(buffer,"0") != 0) && (strcmp(buffer,"null") != 0))
-            strcopy(aliases[aliasCount][i-1],MAXINPUT,buffer);
-    }
-    RespondToCommand(client, "[SM] Added alias #%d '%s' as '%s' (%s). Override: '%s' EntProp: '%s'.",aliasCount,aliases[aliasCount][0],aliases[aliasCount][1],aliases[aliasCount][2],aliases[aliasCount][3],aliases[aliasCount][4]);
-    aliasCount++;
-    return Plugin_Handled;
-}
-
-public Action:saveAlias(client, args)
-{
-    if (!handleClientAccess(client,g_basicFlag))
-        return Plugin_Handled;
-    if (writeAliases())
-        RespondToCommand(client, "[SM] Successfully saved 'cfg/maprewards/aliases.cfg' file.");
-    else
-        RespondToCommand(client, "[SM] Some kind of error has occurred trying to save 'cfg/maprewards/aliases.cfg' file.");
-    return Plugin_Handled;
 }
 
 resetAliases()
@@ -1016,54 +541,6 @@ writeAliases()
     return FileExists("cfg/maprewards/aliases.cfg");
 }
 
-public Action:listScript(client, args)
-{
-    if (!handleClientAccess(client,g_basicFlag))
-        return Plugin_Handled;
-    for (new i = 0;i < scriptCount;i++)
-        RespondToCommand(client,"[SM] #%d: '%s' = '%s'",i,scripts[i][0],scripts[i][1]);
-    return Plugin_Handled;
-}
-
-public Action:reloadScript(client, args)
-{
-    if (!handleClientAccess(client,g_basicFlag))
-        return Plugin_Handled;
-    scriptCount = loadScripts();
-    RespondToCommand(client,"[SM] Successfully loaded %d scripts.",scriptCount);
-    return Plugin_Handled;
-}
-
-public Action:addScript(client, args)
-{
-    if (!handleClientAccess(client,g_basicFlag))
-        return Plugin_Handled;
-    if (args < 2)
-    {
-        RespondToCommand(client, "[SM] Usage: sm_mrw_script_add <name> <script>");
-        return Plugin_Handled;
-    }
-    decl String:buffer[MAXINPUT];
-    GetCmdArg(1, buffer, sizeof(buffer));
-    strcopy(scripts[scriptCount][0],MAXINPUT,buffer);
-    GetCmdArg(2, buffer, sizeof(buffer));
-    strcopy(scripts[scriptCount][1],MAXINPUT,buffer);
-    RespondToCommand(client, "[SM] Added script #%d '%s' as '%s'.",scriptCount,scripts[scriptCount][0],scripts[scriptCount][1]);
-    scriptCount++;
-    return Plugin_Handled;
-}
-
-public Action:saveScript(client, args)
-{
-    if (!handleClientAccess(client,g_basicFlag))
-        return Plugin_Handled;
-    if (writeScripts())
-        RespondToCommand(client, "[SM] Successfully saved 'cfg/maprewards/scripts.cfg' file.");
-    else
-        RespondToCommand(client, "[SM] Some kind of error has occurred trying to save 'cfg/maprewards/scripts.cfg' file.");
-    return Plugin_Handled;
-}
-
 resetScripts()
 {
     for (new i = 0;i < MAXSCRIPTS;i++)
@@ -1115,522 +592,52 @@ writeScripts()
     return FileExists("cfg/maprewards/scripts.cfg");
 }
 
-RespondWriteUsage(client)
+stock buildRewardCmd(index, String:cmdC[], cmdSize, bool:relative = false, const Float:originC[3] = { 0.0, 0.0, 0.0 })
 {
-    CRespondToCommand(client,"[SM] Usage: {green}sm_mrw_cfg_save{default} [{green}OPTIONS{default} ...] <{green}file.cfg{default}>");
-    CRespondToCommand(client,"[SM]    {green}file.cfg{default} is the cfg file to save to. It will be stored within {green}cfg/maprewards/{default}.");
-    CRespondToCommand(client,"[SM]    {green}OPTIONS{default}:");
-    CRespondToCommand(client,"[SM]       -E <{green}reward_id|name{default}>");
-    CRespondToCommand(client,"[SM]          Exclude {green}reward_id{default} from the cfg.");
-    CRespondToCommand(client,"[SM]          Allows a range: {green}#..#{default}, {green}..#{default}, or {green}#..");
-    CRespondToCommand(client,"[SM]          Ranges do not accept reward names, only their ID numbers.");
-    CRespondToCommand(client,"[SM]          Multiple {green}-E{default} switches are accepted.");
-    CRespondToCommand(client,"[SM]       -o <{green}X Y Z{default}>");
-    CRespondToCommand(client,"[SM]          Set the origin coordinates. Only used if the {green}-R{default} switch is also set.");
-    CRespondToCommand(client,"[SM]          The origin will default to your location (or 0,0,0 for the server) unless this option is present.");
-    CRespondToCommand(client,"[SM]          Relative coordinates can be used to offset from your current coordinates.");
-    CRespondToCommand(client,"[SM]       -O <{green}#userid|name{default}>");
-    CRespondToCommand(client,"[SM]          Set the origin coordinates to a player's location.");
-    CRespondToCommand(client,"[SM]          May be used in conjunction with {green}-o{default} to offset from a player as long as {green}-O{default} is provided first.");
-    CRespondToCommand(client,"[SM]       -D <{green}#reward_id|name{default}>");
-    CRespondToCommand(client,"[SM]          Set the origin coordinates to a reward's location.");
-    CRespondToCommand(client,"[SM]       -R");
-    CRespondToCommand(client,"[SM]          Save the rewards with coordinates relative to the origin.");
-    CRespondToCommand(client,"[SM]          If this switch is not present, the {green}-o{default}, {green}-O{default}, and {green}-D{default} switches will be ignored.");
-    CRespondToCommand(client,"[SM]       -f");
-    CRespondToCommand(client,"[SM]          Force the saving of the file, even if a file with the same name already exists.");
-}
-
-public Action:writeCFG(client, args)
-{
-    if (!handleClientAccess(client,g_extendedFlag))
-        return Plugin_Handled;
-    if (args < 1)
+    decl Float:coordsC[3];
+    coordsC = defSpawnCoords[index];
+    if (relative)
     {
-        RespondWriteUsage(client);
-        return Plugin_Handled;
+        for (new i = 0;i < 3;i++)
+            coordsC[i] -= originC[i];
+        Format(cmdC,cmdSize,"sm_mrw_add -c ~%f ~%f ~%f",coordsC[0],coordsC[1],coordsC[2]);
     }
-    decl String:buffer[MAXINPUT];
-    new nextArg = 1;
-    new bool:lastArg = false;
-    new bool:rewards[MAXSPAWNPOINT] = { true, ... };
-    new bool:relative = false;
-    new bool:force = false;
-    new Float:originC[3];
-    if ((client > 0) && (IsClientInGame(client)))
-        GetClientAbsOrigin(client,originC);
-    new bool:err = false;
-    for (;nextArg <= args;nextArg++)
-    {
-        if (nextArg == args)
-            lastArg = true;
-        GetCmdArg(nextArg,buffer,MAXINPUT);
-        if (buffer[0] == '-')
-        {
-            if (buffer[1] == '-')
-            {
-                nextArg++;
-                break;
-            }
-            switch (buffer[1])
-            {
-                case 'R': // Relative
-                {
-                    relative = true;
-                }
-                case 'E': // Exclude reward #
-                {
-                    if (lastArg)
-                        err = true;
-                    else
-                    {
-                        GetCmdArg(++nextArg,buffer,MAXINPUT);
-                        decl range[2];
-                        if (!getRewardRange(buffer,range,client))
-                            for (new i = range[0];i <= range[1];i++)
-                                rewards[i] = false;
-                    }
-                }
-                case 'o': // Origin
-                {
-                    if (lastArg)
-                        err = true;
-                    else
-                    {
-                        GetCmdArg(nextArg+1,buffer,MAXINPUT);
-                        if (strcmp(buffer,"@aim") == 0)
-                        {
-                            nextArg++;
-                            if ((client > 0) && (IsClientInGame(client)))
-                                SetTeleportEndPoint(client,originC);
-                        }
-                        else if ((args-nextArg) < 3)
-                            err = true;
-                        else
-                        {
-                            for (new i = 0;i < 3;i++)
-                            {
-                                GetCmdArg(++nextArg,buffer,17);
-                                if (buffer[0] == '~')
-                                {
-                                    if (strlen(buffer) > 1)
-                                    {
-                                        StrErase(buffer,0,1);
-                                        originC[i] += StringToFloat(buffer);
-                                    }
-                                }
-                                else
-                                    originC[i] = StringToFloat(buffer);
-                            }
-                        }
-                    }
-                }
-                case 'O': // Set origin to anOther player
-                {
-                    if (lastArg)
-                        err = true;
-                    else
-                    {
-                        GetCmdArg(++nextArg,buffer,MAXINPUT);
-                        decl String:target_name[MAX_NAME_LENGTH];
-                        decl target_list[1];
-                        decl target_count;
-                        decl bool:tn_is_ml;
-                        if ((target_count = ProcessTargetString(buffer,client,target_list,1,0,target_name,MAX_NAME_LENGTH,tn_is_ml)) <= 0)
-                        {
-                            ReplyToTargetError(client, target_count);
-                            return Plugin_Handled;
-                        }
-                        GetClientAbsOrigin(target_list[0],originC);
-                    }
-                }
-                case 'D': // set origin to another rewarD
-                {
-                    if (lastArg)
-                        err = true;
-                    else
-                    {
-                        GetCmdArg(++nextArg,buffer,MAXINPUT);
-                        new base = getRewardID(buffer,client);
-                        if (base < 0)
-                        {
-                            RespondToCommand(client, "[SM] Error: Unknown reward '%s'",buffer);
-                            return Plugin_Handled;
-                        }
-                        originC = defSpawnCoords[base];
-                    }
-                }
-                case 'f': // Force, overwrite existing files
-                {
-                    force = true;
-                }
-                default:
-                {
-                    RespondToCommand(client,"[SM] Ignoring unknown switch: %s",buffer);
-                }
-            }
-        }
-        else
-            break;
-        if (err)
-            break;
-    }
-    if ((err) || (nextArg > args))
-    {
-        RespondWriteUsage(client);
-        return Plugin_Handled;
-    }
-    GetCmdArg(nextArg, buffer, MAXINPUT);
-    while ((buffer[0] == '/') || (buffer[0] == '\\'))
-        StrErase(buffer,0);
-    if (StrFind(buffer,"..") > -1)
-    {
-        RespondToCommand(client,"[SM] Error: Illegal path.");
-        return Plugin_Handled;
-    }
-    if ((strcmp(buffer,"aliases.cfg") == 0) || (strcmp(buffer,"scripts.cfg") == 0))
-    {
-        RespondToCommand(client,"[SM] Error: Unable to overwrite system file.");
-        return Plugin_Handled;
-    }
-    Format(buffer,MAXINPUT,"cfg/maprewards/%s",buffer);
-    if (DirExists("cfg/maprewards") == false)
-        CreateDirectory("cfg/maprewards",511);
-    if (FileExists(buffer))
-    {
-        if (force)
-        {
-            RespondToCommand(client,"[SM] File exists . . . Overwriting . . .");
-            DeleteFile(buffer);
-        }
-        else
-        {
-            CRespondToCommand(client,"[SM] File exists . . . Use {green}-f{default} to overwrite.");
-            return Plugin_Handled;
-        }
-    }
-    
-    new Handle:oFile = OpenFile(buffer,"w");
-    new lines = 0;
-    for (new i = 0;i < MAXSPAWNPOINT;i++)
-    {
-        if ((rewards[i]) && (isValidReward(i)))
-        {
-            decl String:cmdC[MAXCMDLEN];
-            buildRewardCmd(i,cmdC,MAXCMDLEN,relative,originC);
-            WriteFileLine(oFile,cmdC);
-            lines++;
-        }
-    }
-    CloseHandle(oFile);
-    if (FileExists(buffer))
-        RespondToCommand(client,"[SM] Successfully wrote %d rewards to file '%s'.",lines,buffer);
     else
-        RespondToCommand(client,"[SM] Some error has occurred. The file was not saved.");
-    return Plugin_Handled;
-}
-
-RespondLoadUsage(client)
-{
-    CRespondToCommand(client,"[SM] Usage: {green}sm_mrw_cfg_load{default} [{green}OPTIONS{default} ...] <{green}file.cfg{default}>");
-    CRespondToCommand(client,"[SM]    {green}file.cfg{default} is the name of a previously saved cfg file stored within {green}cfg/maprewards/{default}.");
-    CRespondToCommand(client,"[SM]    {green}OPTIONS{default}:");
-    CRespondToCommand(client,"[SM]       -E <{green}reward_id{default}>");
-    CRespondToCommand(client,"[SM]          Exclude {green}reward_id{default} from being loaded.");
-    CRespondToCommand(client,"[SM]          Allows a range: {green}#..#{default}, {green}..#{default}, or {green}#..");
-    CRespondToCommand(client,"[SM]          {green}reward_id{default} can only be numbers that correspond to the reward in the order they appear in the CFG, starting with 0.");
-    CRespondToCommand(client,"[SM]          Multiple {green}-E{default} switches are accepted.");
-    CRespondToCommand(client,"[SM]       -o <{green}X Y Z{default}>");
-    CRespondToCommand(client,"[SM]          Set the origin coordinates. Only used for rewards in the cfg that were saved with relative coordinates.");
-    CRespondToCommand(client,"[SM]          The origin will default to your location (or 0,0,0 for the server) unless this option is present.");
-    CRespondToCommand(client,"[SM]          Relative coordinates can be used to offset from your current coordinates.");
-    CRespondToCommand(client,"[SM]       -O <{green}#userid|name{default}>");
-    CRespondToCommand(client,"[SM]          Set the origin coordinates to a player's location.");
-    CRespondToCommand(client,"[SM]          May be used in conjunction with {green}-o{default} to offset from a player as long as {green}-O{default} is provided first.");
-    CRespondToCommand(client,"[SM]       -D <{green}#reward_id|name{default}>");
-    CRespondToCommand(client,"[SM]          Set the origin coordinates to a reward's location.");
-    CRespondToCommand(client,"[SM]       -N   Not relative. Does not set the origin coordinates, useful for cfg's that have dangerously long commands.");
-}
-
-public Action:loadCFG(client, args)
-{
-    if (!handleClientAccess(client,g_basicFlag))
-        return Plugin_Handled;
-    if (args < 1)
+        Format(cmdC,cmdSize,"sm_mrw_add -c %f %f %f",coordsC[0],coordsC[1],coordsC[2]);
+    if ((defSpawnAngles[index][0] != 0.0) || (defSpawnAngles[index][1] != 0.0) || (defSpawnAngles[index][2] != 0.0))
+        Format(cmdC,cmdSize,"%s -r %f %f %f",cmdC,defSpawnAngles[index][0],defSpawnAngles[index][1],defSpawnAngles[index][2]);
+    if (strcmp(entType[index],"prop_physics_override") != 0)
+        Format(cmdC,cmdSize,"%s -e %s",cmdC,entType[index]);
+    if (strlen(model[index]) > 0)
+        Format(cmdC,cmdSize,"%s -m %s",cmdC,model[index]);
+    if (((index > 0) && (StringToInt(entName[index]) != index)) || ((index == 0) && (strcmp(entName[index],"0") != 0)))
+        Format(cmdC,cmdSize,"%s -n %s",cmdC,entName[index]);
+    if (strlen(script[index][0]) > 0)
+        Format(cmdC,cmdSize,"%s -s %s",cmdC,script[index][0]);
+    if (strlen(script[index][1]) > 0)
+        Format(cmdC,cmdSize,"%s -p %s",cmdC,script[index][1]);
+    if (entSpinInt[index] > 0.0)
+        Format(cmdC,cmdSize,"%s -T %.2f %.2f %.2f %.1f",cmdC,entSpin[index][0],entSpin[index][1],entSpin[index][2],entSpinInt[index]);
+    if (unEvaluate[index])
+        Format(cmdC,cmdSize,"%s -U",cmdC);
+    if (entOverlay[index] != FULLSPECTRUM)
+        Format(cmdC,cmdSize,"%s -L %d",cmdC,entOverlay[index]);
+    if (respawnMethod[index] != HOOK_NOHOOK)
     {
-        RespondLoadUsage(client);
-        return Plugin_Handled;
-    }
-    decl String:buffer[MAXINPUT];
-    new Float:originC[3];
-    if ((client > 0) && (IsClientInGame(client)))
-        GetClientAbsOrigin(client,originC);
-    new bool:err = false;
-    new nextArg = 1;
-    new bool:lastArg = false;
-    new bool:rewards[MAXSPAWNPOINT] = { true, ... };
-    new bool:notRelative = false;
-    for (;nextArg <= args;nextArg++)
-    {
-        if (nextArg == args)
-            lastArg = true;
-        GetCmdArg(nextArg,buffer,MAXINPUT);
-        if (buffer[0] == '-')
+        Format(cmdC,cmdSize,"%s -d %i",cmdC,(respawnMethod[index] & ~HOOK_DEACTIVE));
+        if (respawnTime[index] >= 0.0)
+            Format(cmdC,cmdSize,"%s -t %.2f",cmdC,respawnTime[index]);
+        if (entHealth[index] > 0.0)
+            Format(cmdC,cmdSize,"%s -A %.2f",cmdC,entHealth[index]);
+        if ((strlen(rCommand[index][0]) > 0) && (strcmp(rCommand[index][0],"null") != 0))
         {
-            if (buffer[1] == '-')
-            {
-                nextArg++;
-                break;
-            }
-            switch (buffer[1])
-            {
-                case 'E': // Except ID
-                {
-                    if (lastArg)
-                        err = true;
-                    else
-                    {
-                        GetCmdArg(++nextArg,buffer,MAXINPUT);
-                        decl range[2];
-                        if (!getRewardRange(buffer,range,0,false))
-                            for (new i = range[0];i <= range[1];i++)
-                                rewards[i] = false;
-                    }
-                }
-                case 'o': // Origin
-                {
-                    if (lastArg)
-                        err = true;
-                    else
-                    {
-                        GetCmdArg(nextArg+1,buffer,MAXINPUT);
-                        if (strcmp(buffer,"@aim") == 0)
-                        {
-                            nextArg++;
-                            if ((client > 0) && (IsClientInGame(client)))
-                                SetTeleportEndPoint(client,originC);
-                        }
-                        else if ((args-nextArg) < 3)
-                            err = true;
-                        else
-                        {
-                            for (new i = 0;i < 3;i++)
-                            {
-                                GetCmdArg(++nextArg,buffer,17);
-                                if (buffer[0] == '~')
-                                {
-                                    if (strlen(buffer) > 1)
-                                    {
-                                        StrErase(buffer,0,1);
-                                        originC[i] += StringToFloat(buffer);
-                                    }
-                                }
-                                else
-                                    originC[i] = StringToFloat(buffer);
-                            }
-                        }
-                    }
-                }
-                case 'O': // set origin to anOther player
-                {
-                    if (lastArg)
-                        err = true;
-                    else
-                    {
-                        GetCmdArg(++nextArg,buffer,MAXINPUT);
-                        decl String:target_name[MAX_NAME_LENGTH];
-                        decl target_list[1];
-                        decl target_count;
-                        decl bool:tn_is_ml;
-                        if ((target_count = ProcessTargetString(buffer,client,target_list,1,0,target_name,MAX_NAME_LENGTH,tn_is_ml)) <= 0)
-                        {
-                            ReplyToTargetError(client, target_count);
-                            return Plugin_Handled;
-                        }
-                        GetClientAbsOrigin(target_list[0],originC);
-                    }
-                }
-                case 'D': // set origin to another rewarD
-                {
-                    if (lastArg)
-                        err = true;
-                    else
-                    {
-                        GetCmdArg(++nextArg,buffer,MAXINPUT);
-                        new base = getRewardID(buffer,client);
-                        if (base < 0)
-                        {
-                            RespondToCommand(client, "[SM] Error: Unknown reward '%s'",buffer);
-                            return Plugin_Handled;
-                        }
-                        originC = defSpawnCoords[base];
-                    }
-                }
-                case 'N': // Not relative
-                {
-                    notRelative = true;
-                }
-                default:
-                {
-                    RespondToCommand(client,"[SM] Ignoring unknown switch: %s",buffer);
-                }
-            }
+            Format(cmdC,cmdSize,"%s \"%s\"",cmdC,rCommand[index][0]);
+            if (strlen(rCommand[index][1]) > 0)
+                Format(cmdC,cmdSize,"%s\nsm_mrw_modify -1 -X \"%s\"",cmdC,rCommand[index][1]);
         }
-        else
-            break;
-        if (err)
-            break;
+        else if (strlen(rCommand[index][1]) > 0)
+            Format(cmdC,cmdSize,"%s -X \"%s\"",cmdC,rCommand[index][1]);
     }
-    if ((err) || (nextArg > args))
-    {
-        RespondLoadUsage(client);
-        return Plugin_Handled;
-    }
-    GetCmdArg(nextArg, buffer, MAXINPUT);
-    while ((buffer[0] == '/') || (buffer[0] == '\\'))
-        StrErase(buffer,0);
-    if (StrFind(buffer,"..") > -1)
-    {
-        RespondToCommand(client,"[SM] Error: Illegal path.");
-        return Plugin_Handled;
-    }
-    if ((strcmp(buffer,"aliases.cfg") == 0) || (strcmp(buffer,"scripts.cfg") == 0))
-    {
-        RespondToCommand(client,"[SM] Error: Unable to load system file.");
-        return Plugin_Handled;
-    }
-    Format(buffer,MAXINPUT,"cfg/maprewards/%s",buffer);
-    if (!FileExists(buffer))
-    {
-        CRespondToCommand(client,"[SM] Error: File {green}%s{default} does not exist.",buffer);
-        return Plugin_Handled;
-    }
-    cleanUp(CLEAN_MAN_LOAD);
-    new Handle:iFile = OpenFile(buffer,"r");
-    decl String:fBuf[MAXCMDLEN];
-    new lines, skipped;
-    decl String:rep[MAXINPUT];
-    if (!notRelative)
-        Format(rep,MAXINPUT,"sm_mrw_add -o %f %f %f ",originC[0],originC[1],originC[2]);
-    while (ReadFileLine(iFile,fBuf,MAXCMDLEN))
-    {
-        TrimString(fBuf);
-        if (strlen(fBuf) == 0)
-            continue;
-        if (StrFind(fBuf,"sm_mrw_add ") == 0)
-        {
-            if (rewards[lines++])
-            {
-                if (!notRelative)
-                    ReplaceStringEx(fBuf,MAXCMDLEN,"sm_mrw_add ",rep);
-                //PrintToServer("#%d... %s",lines-1,fBuf);
-                ServerCommand(fBuf);
-            }
-            else
-                skipped++;
-        }
-        else if (StrFind(fBuf,"sm_mrw_modify -1") == 0)
-        {
-            if (rewards[lines])
-                ServerCommand(fBuf);
-        }
-        else
-            ServerCommand(fBuf);
-    }
-    CloseHandle(iFile);
-    if (lines > 0)
-        CRespondToCommand(client,"[SM] Successfully spawned {green}%d{default} rewards.",lines-skipped);
-    else
-        CRespondToCommand(client,"[SM] Warning: No rewards found in file {green}%s{default}. CFG was executed.",buffer);
-    return Plugin_Handled;
-}
-
-public cvarEnableChange(Handle:convar, const String:oldValue[], const String:newValue[])
-{
-    g_enable = StringToInt(newValue);
-    if ((StringToInt(oldValue)) && (!g_enable))
-        killRewards();
-    else if ((!StringToInt(oldValue)) && (g_enable))
-        spawnRewards();
-}
-
-public cvarChange(Handle:convar, const String:oldValue[], const String:newValue[])
-{
-    g_respawnTime = StringToFloat(newValue);
-}
-
-stock orFlag(&flags, flag)
-{
-    if (64 < flag < 91) // if uppercase
-        flag += 32;     //    convert to lowercase
-    switch (flag)
-    {
-        case 'a':   flags |= ADMFLAG_RESERVATION;
-		case 'b':   flags |= ADMFLAG_GENERIC;
-		case 'c':   flags |= ADMFLAG_KICK;
-		case 'd':   flags |= ADMFLAG_BAN;
-		case 'e':   flags |= ADMFLAG_UNBAN;
-		case 'f':   flags |= ADMFLAG_SLAY;
-		case 'g':   flags |= ADMFLAG_CHANGEMAP;
-		case 'h':   flags |= ADMFLAG_CONVARS;
-		case 'i':   flags |= ADMFLAG_CONFIG;
-		case 'j':   flags |= ADMFLAG_CHAT;
-		case 'k':   flags |= ADMFLAG_VOTE;
-		case 'l':   flags |= ADMFLAG_PASSWORD;
-		case 'm':   flags |= ADMFLAG_RCON;
-		case 'n':   flags |= ADMFLAG_CHEATS;
-		case 'o':   flags |= ADMFLAG_CUSTOM1;
-		case 'p':   flags |= ADMFLAG_CUSTOM2;
-		case 'q':   flags |= ADMFLAG_CUSTOM3;
-		case 'r':   flags |= ADMFLAG_CUSTOM4;
-		case 's':   flags |= ADMFLAG_CUSTOM5;
-		case 't':   flags |= ADMFLAG_CUSTOM6;
-		case 'z':   flags |= ADMFLAG_ROOT;
-    } // any other characters are ignored
-}
-
-public cvarBasicFlagChange(Handle:convar, const String:oldValue[], const String:newValue[])
-{
-    g_basicFlag = 0;
-    for (new i = 0, j = strlen(newValue);i < j;i++)
-        orFlag(g_basicFlag,newValue[i]);
-}
-
-public cvarCreateFlagChange(Handle:convar, const String:oldValue[], const String:newValue[])
-{
-    g_createFlag = 0;
-    for (new i = 0, j = strlen(newValue);i < j;i++)
-        orFlag(g_createFlag,newValue[i]);
-}
-
-public cvarExtendedFlagChange(Handle:convar, const String:oldValue[], const String:newValue[])
-{
-    g_extendedFlag = 0;
-    for (new i = 0, j = strlen(newValue);i < j;i++)
-        orFlag(g_extendedFlag,newValue[i]);
-}
-
-public OnPluginEnd()
-{
-    cleanUp(CLEAN_PLUG_END,autoSave(SAVE_PLUG_END));
-}
-
-public OnMapStart()
-{   // Get cvar values.
-    g_enable = GetConVarInt(c_enable);
-    g_respawnTime = GetConVarFloat(c_respawnTime);
-    g_cleanUp = GetConVarInt(c_cleanUp);
-    g_autoLoad = GetConVarInt(c_autoLoad);
-    g_autoSave = GetConVarInt(c_autoSave);
-    
-    autoLoad(LOAD_MAP_START|LOAD_PLUG_START,cleanUp(CLEAN_MAP_START,autoSave(SAVE_MAP_START)));
-}
-
-public OnRoundStart(Handle:event, const String:name[], bool:dontBroadcast)
-{
-    //CreateTimer(5.0, timerRespawnReward, -1);
-    autoLoad(LOAD_ROUND_START|LOAD_ROUND_START_B,cleanUp(CLEAN_ROUND_START,autoSave(SAVE_ROUND_START)));
-    spawnRewards();
 }
 
 killReward(index)
@@ -1650,12 +657,12 @@ killReward(index)
             GetEntPropString(ent, Prop_Data, "m_iName", temp, 32);
             if (strcmp(entName[index],temp) == 0)
                 AcceptEntityInput(ent, "Kill");
-            else
+            /*else
             {
                 decl String:className[35];
                 GetEdictClassname(ent,className,35);
                 PrintToServer("[SM] Error: Reward #%d,%s (%d,%s) m_iName == %s, expected '%s'",index,entType[index],ent,className,temp,entName[index]);
-            }
+            }*/
         }
     }
 }
@@ -1666,38 +673,6 @@ killRewards()
     {
         killReward(i);
     }
-}
-
-public Action:killEntity(client, args)
-{
-    if (!handleClientAccess(client,g_basicFlag))
-        return Plugin_Handled;
-    if (args < 1)
-    {
-        RespondToCommand(client, "[SM] Usage: sm_mrw_kill <#entity_id>");
-        return Plugin_Handled;
-    }
-    decl String:buffer[16];
-    GetCmdArg(1,buffer,16);
-    new entID = StringToInt(buffer);
-    if (entID < 1)
-    {
-        RespondToCommand(client,"[SM] Error: Cannot kill entity '%d'.",entID);
-        return Plugin_Handled;
-    }
-    for (new i = 0; i < MAXSPAWNPOINT; i++)
-    {
-        if (spawnEnts[i] == entID)
-        {
-            RespondToCommand(client,"[SM] Error: Entity is still loaded as ID #%d. Use sm_mrw_remove or sm_mrw_release the entity first.",i);
-            return Plugin_Handled;
-        }
-    }
-    if (IsValidEntity(entID))
-        AcceptEntityInput(entID, "Kill");
-    else
-        RespondToCommand(client,"[SM] Error: Invalid entity.");
-    return Plugin_Handled;
 }
 
 resetReward(index)
@@ -1864,106 +839,1671 @@ newEnt()
     return i;
 }
 
-stock RespondUsage(client)
+triggerReward(index, client, inflictor = -1)
 {
-    CRespondToCommand(client, "[SM] Usage: {green}sm_mrw_add{default} [{green}OPTIONS{default} ...] [{green}command{default} ...]");
-    CRespondToCommand(client, "[SM]    At least {green}model{default} or {green}entity_type{default} is required.");
-    CRespondToCommand(client, "[SM]       If {green}entity_type{default} is {green}prop_physics_override{default}, both are required.");
-    CRespondToCommand(client, "[SM]    {green}command{default} is a full command to run when a player touches the reward.");
-    CRespondToCommand(client, "[SM]       If present, {green}#player{default} will be replaced with the target string of the client who activated the reward.");
-    CRespondToCommand(client, "[SM]    {green}OPTIONS{default}:");
+    decl String:cmdD[MAXCMDLEN];
+    strcopy(cmdD,MAXCMDLEN,rCommand[index][0]);
+    if ((inflictor > -1) && (strlen(rCommand[index][1]) > 0))
+        strcopy(cmdD,MAXCMDLEN,rCommand[index][1]);
+    if ((strlen(cmdD) > 0) && (strcmp(cmdD,"null") != 0))
+    {
+        decl String:cmdC[MAXCMDLEN];
+        decl String:target[8];
+        Format(target,8,"#%i",GetClientUserId(client));
+        strcopy(cmdC,MAXCMDLEN,cmdD);
+        ReplaceString(cmdC,MAXCMDLEN,"#player",target);
+        ReplaceString(cmdC,MAXCMDLEN,"#reward",entName[index]);
+        if (inflictor > -1)
+        {
+            decl String:flict[8];
+            IntToString(inflictor,flict,8);
+            ReplaceString(cmdC,MAXCMDLEN,"#inflictor",flict);
+        }
+        ServerCommand(cmdC);
+    }
+}
+
+stock evaluateRewardAliases(const &any:r, bool:skip[4] = { false, ... })
+{
+    for (new i = 0;((i < scriptCount) && ((!skip[2]) || (!skip[3])));i++)
+    {
+        if ((!skip[2]) && (strcmp(script[r][0],scripts[i][0]) == 0))
+        {
+            strcopy(script[r][0],MAXINPUT,scripts[i][1]);
+            skip[2] = true;
+        }
+        if ((!skip[3]) && (strcmp(script[r][1],scripts[i][0]) == 0))
+        {
+            strcopy(script[r][1],MAXINPUT,scripts[i][1]);
+            skip[3] = true;
+        }
+    }
+    skip[0] = ((skip[0]) || (strcmp(model[r],"null") == 0) || (strcmp(model[r],"0") == 0));
+    skip[1] = ((skip[1]) || (strcmp(entType[r],"null") == 0) || (strcmp(entType[r],"0") == 0));
+    skip[2] = ((skip[2]) || (strlen(script[r][0])));
+    skip[3] = ((skip[3]) || (strlen(script[r][1])));
+    decl bool:isModel;
+    decl String:tempModel[MAXINPUT];
+    decl String:tempEntType[64];
+    new bool:writeTemp[2];
+    for (new i = 0;((i < aliasCount) && ((!skip[0]) || (!skip[1])));i++)
+    {
+        if (((isModel = ((!skip[0]) && (strcmp(model[r],aliases[i][0]) == 0)))) || ((!skip[1]) && (strcmp(entType[r],aliases[i][0]) == 0)))
+        {
+            if ((!skip[0]) && ((isModel) || (strlen(aliases[i][1]) > 0)))
+            {
+                strcopy(tempModel,MAXINPUT,aliases[i][1]);
+                writeTemp[0] = true;
+                if (isModel)
+                    skip[0] = true;
+            }
+            if ((!skip[1]) && ((!isModel) || (strlen(aliases[i][2]) > 0)))
+            {
+                strcopy(tempEntType,64,aliases[i][2]);
+                writeTemp[1] = true;
+                if (!isModel)
+                    skip[1] = true;
+            }
+            if ((!skip[2]) && (strlen(aliases[i][3]) > 0))
+            {
+                strcopy(script[r][0],MAXINPUT,aliases[i][3]);
+                skip[2] = true;
+            }
+            if ((!skip[3]) && (strlen(aliases[i][4]) > 0))
+            {
+                strcopy(script[r][1],MAXINPUT,aliases[i][4]);
+                skip[3] = true;
+            }
+        }
+    }
+    if (writeTemp[0])
+        strcopy(model[r],MAXINPUT,tempModel);
+    if (writeTemp[1])
+        strcopy(entType[r],64,tempEntType);
+}
+
+spawnReward(index)
+{
+    if ((strlen(entType[index]) == 0) || (GetRealClientCount() < 1))
+        return;
+    
+    entDamage[index] = 0.0;
+    
+    if (respawnMethod[index] & HOOK_DEACTIVE)
+    {
+        //respawnMethod[index] &= ~HOOK_DEACTIVE;
+        if (IsValidEntity(spawnEnts[index]))
+        {
+            decl String:temp[32];
+            GetEntPropString(spawnEnts[index], Prop_Data, "m_iName", temp, 32);
+            if (strcmp(entName[index],temp) == 0)
+            {
+                respawnMethod[index] &= ~HOOK_DEACTIVE;
+                if (respawnMethod[index] & HOOK_TOUCH)
+                    SDKHook(spawnEnts[index], SDKHook_StartTouch, mapRewardPickUp);
+                if (respawnMethod[index] & HOOK_HURT)
+                    SDKHook(spawnEnts[index], SDKHook_OnTakeDamage, mapRewardTakeDamage);
+                return;
+            } // Don't return here incase the reward does not match so it can be made from scratch
+        }
+        else if (!(respawnMethod[index] & HOOK_STATIC))
+        {
+            if (respawnTime[index] < 0.0)
+                CreateTimer(g_respawnTime, timerRespawnReward, index);
+            else if (respawnTime[index] > 0.0)
+                CreateTimer(respawnTime[index], timerRespawnReward, index);
+            return;
+        }
+    }
+    
+    killReward(index);
+    
+    decl String:tempModel[MAXINPUT];
+    decl String:tempEntType[64];
+    decl String:tempScript[2][MAXINPUT];
+    strcopy(tempModel,MAXINPUT,model[index]);
+    strcopy(tempEntType,64,entType[index]);
+    strcopy(tempScript[0],MAXINPUT,script[index][0]);
+    strcopy(tempScript[1],MAXINPUT,script[index][1]);
+    if (unEvaluate[index])
+    {
+        evaluateRewardAliases(index);
+        StrSwap(tempModel,model[index]);
+        StrSwap(tempEntType,entType[index]);
+        StrSwap(tempScript[0],script[index][0]);
+        StrSwap(tempScript[1],script[index][1]);
+    }
+    if (strcmp(tempModel,"null") == 0)
+        strcopy(tempModel,MAXINPUT,"");
+    if (strcmp(tempEntType,"null") == 0)
+        strcopy(tempEntType,64,"");
+    if (strcmp(tempScript[0],"null") == 0)
+        strcopy(tempScript[0],MAXINPUT,"");
+    if (strcmp(tempScript[1],"null") == 0)
+        strcopy(tempScript[1],MAXINPUT,"");
+    if (strlen(tempEntType) < 1)
+        strcopy(tempEntType,64,"prop_physics_override");
+    
+    new entReward = CreateEntityByName(tempEntType);
+    
+    if (IsValidEntity(entReward))
+    {
+        SetEntPropString(entReward, Prop_Data, "m_iName", entName[index]);
+        if (strlen(tempModel) > 0)
+            DispatchKeyValue(entReward, "model", tempModel);
+        new spawned = 0;
+        if (strlen(tempScript[0]) > 0)
+        {
+            if (StrContains(tempScript[0],"?") != -1)
+            {
+                new String:strMain[2][MAXINPUT];
+                new String:strCurrent[MAXINPUT];
+                new String:strKeys[2][MAXINPUT];
+                new String:strType[16];
+                new String:strTemp[MAXINPUT];
+                ExplodeString(tempScript[0],"?",strMain,2,MAXINPUT,true);
+                Format(strMain[1],MAXINPUT,"%s&",strMain[1]);
+                if (strcmp(strMain[0],"null") != 0)
+                    DispatchKeyValue(entReward, "overridescript", strMain[0]);
+                //PrintToServer("[SM] Debug0: %s | %s",strMain[0],strMain[1]);
+                while (SplitString(strMain[1],"&",strCurrent,MAXINPUT) > -1)
+                {
+                    //PrintToServer("[SM] Debug1: %s",strCurrent);
+                    if (StrContains(strCurrent,",") == -1)
+                    {
+                        if (!spawned)
+                        {
+                            DispatchSpawn(entReward);
+                            spawned = 1;
+                        }
+                        AcceptEntityInput(entReward,strCurrent);
+                    }
+                    else
+                    {
+                        ExplodeString(strCurrent,",",strKeys,2,MAXINPUT,true);
+                        //PrintToServer("[SM] Debug2: %s | %s",strKeys[0],strKeys[1]);
+                        SplitString(strKeys[1],"=",strType,16);
+                        Format(strType,16,"%s=",strType);
+                        ReplaceStringEx(strKeys[1],MAXINPUT,strType,"",-1,0);
+                        //PrintToServer("[SM] Debug3: %s | %s",strType,strKeys[1]);
+                        if ((strcmp(strType,"float=") == 0) || (strcmp(strType,"int=") == 0))
+                            DispatchKeyValueFloat(entReward,strKeys[0],StringToFloat(strKeys[1]));
+                        else if (strcmp(strType,"string=") == 0)
+                            DispatchKeyValue(entReward,strKeys[0],strKeys[1]);
+                        else
+                            DispatchKeyValue(entReward,strKeys[0],strKeys[1]);
+                    }
+                    Format(strTemp,MAXINPUT,"%s&",strCurrent);
+                    ReplaceStringEx(strMain[1],MAXINPUT,strTemp,"",-1,0);
+                    ReplaceStringEx(strMain[1],MAXINPUT,strCurrent,"",-1,0);
+                    //PrintToServer("[SM] Debug4: %s",strMain[1]);
+                }
+            }
+            else
+                DispatchKeyValue(entReward, "overridescript", tempScript[0]);
+        }
+        if (strlen(tempScript[1]) > 0)
+        {
+            //[prop_type:]key,[type=]value&[prop_type:]key,[type=]value
+            decl String:strMain[MAXINPUT];
+            decl String:strCurrent[MAXINPUT];
+            decl String:strKeys[2][MAXINPUT];
+            decl String:strType[16];
+            decl String:strTemp[MAXINPUT];
+            strcopy(strMain,MAXINPUT,tempScript[1]);
+            StrCat(strMain,MAXINPUT,"&");
+            new PropType:propType;
+            while (SplitString(strMain,"&",strCurrent,MAXINPUT) > -1)
+            {
+                if (StrContains(strCurrent,",") > -1)
+                {
+                    propType = Prop_Data;
+                    if ((strlen(strCurrent) > 2) && (strCurrent[1] == ':'))
+                    {
+                        if (strCurrent[0] == '1')
+                            propType = Prop_Send;
+                        StrErase(strCurrent,0,2);
+                    }
+                    if (!spawned)
+                    {
+                        DispatchSpawn(entReward);
+                        spawned = 1;
+                    }
+                    ExplodeString(strCurrent,",",strKeys,2,MAXINPUT,true);
+                    SplitString(strKeys[1],"=",strType,16);
+                    StrCat(strType,16,"=");
+                    ReplaceStringEx(strKeys[1],MAXINPUT,strType,"",-1,0);
+                    if (strcmp(strType,"float=") == 0)
+                        SetEntPropFloat(entReward, propType, strKeys[0], StringToFloat(strKeys[1]));
+                    else if (strcmp(strType,"int=") == 0)
+                        SetEntProp(entReward, propType, strKeys[0], StringToInt(strKeys[1]));
+                    else if (strcmp(strType,"bool=") == 0)
+                        SetEntProp(entReward, propType, strKeys[0], StringToInt(strKeys[1]), 1);
+                    else if (strcmp(strType,"vec=") == 0)
+                    {
+                        new Float:vec[3];
+                        decl String:strVec[3][16];
+                        ExplodeString(strKeys[1],",",strVec,3,16,true);
+                        for (new i = 0;i < 3;i++)
+                            vec[i] = StringToFloat(strVec[i]);
+                        SetEntPropVector(entReward, propType, strKeys[0], vec);
+                    }
+                    else if (strcmp(strType,"ent=") == 0)
+                        SetEntPropEnt(entReward, propType, strKeys[0], StringToInt(strKeys[1]));
+                    else
+                        SetEntPropString(entReward, propType, strKeys[0], strKeys[1]);
+                }
+                strcopy(strTemp,MAXINPUT,strCurrent);
+                StrCat(strTemp,MAXINPUT,"&");
+                ReplaceStringEx(strMain,MAXINPUT,strTemp,"",-1,0);
+                ReplaceStringEx(strMain,MAXINPUT,strCurrent,"",-1,0);
+            }
+        }
+        if (!spawned)
+            DispatchSpawn(entReward);
+        if (entOverlay[index] != FULLSPECTRUM)
+        {
+            decl colors[4];
+            colors[0] = (entOverlay[index] & 0x000000FF);
+            colors[1] = (entOverlay[index] & 0x0000FF00) >> 8;
+            colors[2] = (entOverlay[index] & 0x00FF0000) >> 16;
+            colors[3] = (entOverlay[index] & 0xFF000000) >> 24;
+            for (new i = 0;i < 4;i++)
+                if (colors[i] < 0)
+                    colors[i] = (colors[i] % 256) + 256;
+            SetEntityRenderMode(entReward,RENDER_GLOW);
+            SetEntityRenderColor(entReward,colors[0],colors[1],colors[2],colors[3]);
+            //SetEntityRenderFx(entReward,RENDERFX_GLOWSHELL); // maybe we can play with this later
+            //PrintToChatAll("[debug] %d = %d,%d,%d,%d",entOverlay[index],colors[0],colors[1],colors[2],colors[3]);
+        }
+        TeleportEntity(entReward, defSpawnCoords[index], defSpawnAngles[index], NULL_VECTOR);
+        if (respawnMethod[index] & HOOK_DEACTIVE)
+        {
+            if (respawnTime[index] < 0.0)
+                CreateTimer(g_respawnTime, timerRespawnReward, index);
+            else if (respawnTime[index] > 0.0)
+                CreateTimer(respawnTime[index], timerRespawnReward, index);
+        }
+        else
+        {
+            if (respawnMethod[index] & HOOK_TOUCH)
+                SDKHook(entReward, SDKHook_StartTouch, mapRewardPickUp);
+            if (respawnMethod[index] & HOOK_HURT)
+                SDKHook(entReward, SDKHook_OnTakeDamage, mapRewardTakeDamage);
+        }
+        if (entSpinInt[index] > 0.0)
+        {
+            entSpinAngles[index] = defSpawnAngles[index];
+            entTimers[index] = CreateTimer(entSpinInt[index], timerSpinEnt, index, TIMER_REPEAT);
+        }
+        spawnEnts[index] = entReward;
+    }
+    else
+    {
+        PrintToChatAll("[SM] maprewards: Error, unable to spawn reward #%i",index);
+        PrintToServer("[SM] maprewards: Error, unable to spawn reward #%i",index);
+    }
+}
+
+stock getRewardID(const String:name[], any:client = 0, any:ignore = -1, bool:resolve = true)
+{
+    new id = -1;
+    if ((resolve) && (client > 0) && ((strcmp(name,"@n") == 0) || (strcmp(name,"@aim") == 0)))
+    {
+        new Float:distance[2];
+        new Float:dCoords[2][3];
+        if (strlen(name) == 2)
+            GetClientAbsOrigin(client,dCoords[0]);
+        else
+            SetTeleportEndPoint(client,dCoords[0]);
+        new bool:initialized;
+        for (new i = 0;i < MAXSPAWNPOINT;i++)
+        {
+            if ((ignore == i) || (strlen(entType[i]) < 1))
+                continue;
+            if (spawnEnts[i] > -1)
+                GetEntPropVector(spawnEnts[i],Prop_Data,"m_vecOrigin",dCoords[1]);
+            else
+                dCoords[1] = defSpawnCoords[i];
+            distance[0] = GetVectorDistance(dCoords[0],dCoords[1]);
+            if ((!initialized) || (distance[0] < distance[1]))
+            {
+                initialized = true;
+                distance[1] = distance[0];
+                id = i;
+            }
+        }
+    }
+    else if ((resolve) && (strcmp(name,"-1") == 0))
+        id = getNewestReward();
+    else if (StrIsDigit(name) > -1)
+        id = StringToInt(name);
+    else if (resolve)
+    {
+        for (new i = 0;i < MAXSPAWNPOINT;i++)
+        {
+            if (strcmp(entName[i],name) == 0)
+            {
+                id = i;
+                break;
+            }
+        }
+    }
+    return id;
+}
+
+stock getRewardRange(const String:rewards[], any:range[2], any:client = 0, bool:resolve = true)
+{
+    range = { -1, -1 };
+    new blen;
+    new dots;
+    decl String:temp[32];
+    blen = strlen(rewards);
+    switch ((dots = StrFind(rewards,"..")))
+    {
+        case -1:
+        {
+            range[0] = range[1] = getRewardID(rewards,client,resolve);
+        }
+        case 0:
+        {
+            if (blen > 2)
+            {
+                range[0] = 0;
+                strcopy(temp,32,rewards);
+                StrErase(temp,0,2);
+                if (StrIsDigit(temp) > -1)
+                {
+                    range[0] = 0;
+                    range[1] = StringToInt(temp);
+                }
+                else
+                    range[0] = range[1] = getRewardID(rewards,client,resolve);
+            }
+        }
+        default:
+        {
+            if (StrIsDigit(rewards) > -1)
+            {
+                range[0] = StringToInt(rewards);
+                if ((dots += 2) < blen)
+                {
+                    strcopy(temp,32,rewards);
+                    StrErase(temp,0,dots);
+                    if (StrIsDigit(temp) > -1)
+                        range[1] = StringToInt(temp);
+                    else
+                        range[0] = range[1] = getRewardID(rewards,client,resolve);
+                }
+                else
+                    range[1] = MAXSPAWNPOINT-1;
+            }
+        }
+    }
+    if (range[0] > -1)
+    {
+        if (range[1] >= MAXSPAWNPOINT)
+            range[1] = MAXSPAWNPOINT-1;
+        return 0;
+    }
+    return 1;
+}
+
+stock getRewardList(const String:rewards[], bool:list[MAXSPAWNPOINT], any:client = 0)
+{
+    decl String:str[MAXINPUT];
+    strcopy(str,MAXINPUT,rewards);
+    decl String:current[32];
+    decl range[2];
+    decl bool:negate;
+    decl len;
+    StrCat(str,MAXINPUT,",");
+    while (SplitString(str,",",current,32) > -1)
+    {
+        if (current[0] == '!')
+        {
+            negate = true;
+            StrErase(current,0,1);
+        }
+        else
+            negate = false;
+        if (!getRewardRange(current,range,client))
+        {
+            for (new i = range[0];i <= range[1];i++)
+            {
+                if (isValidReward(i))
+                {
+                    if (negate)
+                        list[i] = false;
+                    else
+                        list[i] = true;
+                }
+            }
+        }
+        len = strlen(current);
+        if (strlen(str) > len)
+            len++;
+        StrErase(str,0,len);
+    }
+    new ret = 0;
+    for (new i = 0;i < MAXSPAWNPOINT;i++)
+        if (list[i])
+            ret++;
+    return ret;
+}
+
+RespondWriteUsage(client)
+{
+    CRespondToCommand(client,"[SM] Usage: sm_mrw_cfg_save [OPTIONS ...] <file.cfg>");
+    CRespondToCommand(client,"[SM]    file.cfg is the cfg file to save to. It will be stored within cfg/maprewards/.");
+    CRespondToCommand(client,"[SM]    OPTIONS:");
+    CRespondToCommand(client,"[SM]       -E <reward_id|name>");
+    CRespondToCommand(client,"[SM]          Exclude reward_id from the cfg.");
+    CRespondToCommand(client,"[SM]          Allows a range: #..#, ..#, or #..");
+    CRespondToCommand(client,"[SM]          Ranges do not accept reward names, only their ID numbers.");
+    CRespondToCommand(client,"[SM]          Multiple -E switches are accepted.");
+    CRespondToCommand(client,"[SM]       -o <X Y Z>");
+    CRespondToCommand(client,"[SM]          Set the origin coordinates. Only used if the -R switch is also set.");
+    CRespondToCommand(client,"[SM]          The origin will default to your location (or 0,0,0 for the server) unless this option is present.");
+    CRespondToCommand(client,"[SM]          Relative coordinates can be used to offset from your current coordinates.");
+    CRespondToCommand(client,"[SM]       -O <#userid|name>");
+    CRespondToCommand(client,"[SM]          Set the origin coordinates to a player's location.");
+    CRespondToCommand(client,"[SM]          May be used in conjunction with -o to offset from a player as long as -O is provided first.");
+    CRespondToCommand(client,"[SM]       -D <#reward_id|name>");
+    CRespondToCommand(client,"[SM]          Set the origin coordinates to a reward's location.");
+    CRespondToCommand(client,"[SM]       -R");
+    CRespondToCommand(client,"[SM]          Save the rewards with coordinates relative to the origin.");
+    CRespondToCommand(client,"[SM]          If this switch is not present, the -o, -O, and -D switches will be ignored.");
+    CRespondToCommand(client,"[SM]       -f");
+    CRespondToCommand(client,"[SM]          Force the saving of the file, even if a file with the same name already exists.");
+}
+
+RespondLoadUsage(client)
+{
+    CRespondToCommand(client,"[SM] Usage: sm_mrw_cfg_load [OPTIONS ...] <file.cfg>");
+    CRespondToCommand(client,"[SM]    file.cfg is the name of a previously saved cfg file stored within cfg/maprewards/.");
+    CRespondToCommand(client,"[SM]    OPTIONS:");
+    CRespondToCommand(client,"[SM]       -E <reward_id>");
+    CRespondToCommand(client,"[SM]          Exclude reward_id from being loaded.");
+    CRespondToCommand(client,"[SM]          Allows a range: #..#, ..#, or #..");
+    CRespondToCommand(client,"[SM]          reward_id can only be numbers that correspond to the reward in the order they appear in the CFG, starting with 0.");
+    CRespondToCommand(client,"[SM]          Multiple -E switches are accepted.");
+    CRespondToCommand(client,"[SM]       -o <X Y Z>");
+    CRespondToCommand(client,"[SM]          Set the origin coordinates. Only used for rewards in the cfg that were saved with relative coordinates.");
+    CRespondToCommand(client,"[SM]          The origin will default to your location (or 0,0,0 for the server) unless this option is present.");
+    CRespondToCommand(client,"[SM]          Relative coordinates can be used to offset from your current coordinates.");
+    CRespondToCommand(client,"[SM]       -O <#userid|name>");
+    CRespondToCommand(client,"[SM]          Set the origin coordinates to a player's location.");
+    CRespondToCommand(client,"[SM]          May be used in conjunction with -o to offset from a player as long as -O is provided first.");
+    CRespondToCommand(client,"[SM]       -D <#reward_id|name>");
+    CRespondToCommand(client,"[SM]          Set the origin coordinates to a reward's location.");
+    CRespondToCommand(client,"[SM]       -N   Not relative. Does not set the origin coordinates, useful for cfg's that have dangerously long commands.");
+}
+
+stock RespondAddUsage(client)
+{
+    CRespondToCommand(client, "[SM] Usage: sm_mrw_add [OPTIONS ...] [command ...]");
+    CRespondToCommand(client, "[SM]    At least model or entity_type is required.");
+    CRespondToCommand(client, "[SM]       If entity_type is prop_physics_override, both are required.");
+    CRespondToCommand(client, "[SM]    command is a full command to run when a player touches the reward.");
+    CRespondToCommand(client, "[SM]       If present, #player will be replaced with the target string of the client who activated the reward.");
+    CRespondToCommand(client, "[SM]    OPTIONS:");
     CRespondToCommand(client, "[SM]       -h   Display this help text.");
-    CRespondToCommand(client, "[SM]       -A <{green}health{default}>");
+    CRespondToCommand(client, "[SM]       -A <health>");
     CRespondToCommand(client, "[SM]          Set an internal health amount for the reward.");
-    CRespondToCommand(client, "[SM]          Only used when {green}respawn_method{default} is {green}kill{deafult} to kill the reward after it takes this much damage.");
-    CRespondToCommand(client, "[SM]       -b <{green}#reward_id|name>");
+    CRespondToCommand(client, "[SM]          Only used when respawn_method is kill{deafult} to kill the reward after it takes this much damage.");
+    CRespondToCommand(client, "[SM]       -b <#reward_id|name>");
     CRespondToCommand(client, "[SM]          Uses the provided reward as a base to copy data from.");
     CRespondToCommand(client, "[SM]          This switch should appear before anything else as it overwrites all the data.");
     CRespondToCommand(client, "[SM]          The origin coordinates will be set to this reward unless the origin is set.");
-    CRespondToCommand(client, "[SM]       -c <{green}X Y Z{default}>");
-    CRespondToCommand(client, "[SM]          Coordinates to spawn the entity at, can be relative to {green}origin{default} using {green}~{default}'s.");
-    CRespondToCommand(client, "[SM]          If not provided, {green}origin{default} will be used.");
-    CRespondToCommand(client, "[SM]       -d <{green}respawn_method{default}>");
+    CRespondToCommand(client, "[SM]       -c <X Y Z>");
+    CRespondToCommand(client, "[SM]          Coordinates to spawn the entity at, can be relative to origin using ~'s.");
+    CRespondToCommand(client, "[SM]          If not provided, origin will be used.");
+    CRespondToCommand(client, "[SM]       -d <respawn_method>");
     CRespondToCommand(client, "[SM]          Must be one of the following:");
-    CRespondToCommand(client, "[SM]          {green}pickup{default}: When a player touches it, it will disappear until the respawn time is up.");
-    CRespondToCommand(client, "[SM]          {green}static{default}: The reward will stay, but will be inactive until the respawn time is up.");
-    CRespondToCommand(client, "[SM]          {green}constant{default}: The reward will stay and never deactivate.");
-    CRespondToCommand(client, "[SM]          {green}hurt{default}: The reward will trigger when a player hurts it.");
-    CRespondToCommand(client, "[SM]          {green}kill{default}: The reward will trigger when a player kills it.");
-    CRespondToCommand(client, "[SM]          {green}notouch{default}: The reward will not trigger when a player touches it. Can be used after other settings to remove the {green}touch{default} event.");
-    CRespondToCommand(client, "[SM]          {green}nohook{default} or {green}nopickup{default}: Default. Just an entity, nothing special about it.");
-    CRespondToCommand(client, "[SM]       -e <{green}entity_type{default}>");
-    CRespondToCommand(client, "[SM]          The type of entity you wish to create. If not provided, {green}prop_physics_override{default} is used.");
-    CRespondToCommand(client, "[SM]          You may use model aliases defined with {green}sm_mrw_model_add{default}.");
-    CRespondToCommand(client, "[SM]       -l <{green}R G B A{default}>");
+    CRespondToCommand(client, "[SM]          pickup: When a player touches it, it will disappear until the respawn time is up.");
+    CRespondToCommand(client, "[SM]          static: The reward will stay, but will be inactive until the respawn time is up.");
+    CRespondToCommand(client, "[SM]          constant: The reward will stay and never deactivate.");
+    CRespondToCommand(client, "[SM]          hurt: The reward will trigger when a player hurts it.");
+    CRespondToCommand(client, "[SM]          kill: The reward will trigger when a player kills it.");
+    CRespondToCommand(client, "[SM]          notouch: The reward will not trigger when a player touches it. Can be used after other settings to remove the touch event.");
+    CRespondToCommand(client, "[SM]          nohook or nopickup: Default. Just an entity, nothing special about it.");
+    CRespondToCommand(client, "[SM]       -e <entity_type>");
+    CRespondToCommand(client, "[SM]          The type of entity you wish to create. If not provided, prop_physics_override is used.");
+    CRespondToCommand(client, "[SM]          You may use model aliases defined with sm_mrw_model_add.");
+    CRespondToCommand(client, "[SM]       -l <R G B A>");
     CRespondToCommand(client, "[SM]          Set the color overlay.");
-    CRespondToCommand(client, "[SM]       -L <{green}integer_color{default}>");
-    CRespondToCommand(client, "[SM]          Set the color overlay. {green}integer_color{default} is an RGBA value in integer representation.");
-    CRespondToCommand(client, "[SM]       -m <{green}model{default}>");
+    CRespondToCommand(client, "[SM]       -L <integer_color>");
+    CRespondToCommand(client, "[SM]          Set the color overlay. integer_color is an RGBA value in integer representation.");
+    CRespondToCommand(client, "[SM]       -m <model>");
     CRespondToCommand(client, "[SM]          The path to the model file you wish to use.");
-    CRespondToCommand(client, "[SM]          You may use model aliases defined with {green}sm_mrw_model_add{default}.");
-    CRespondToCommand(client, "[SM]       -n <{green}name{default}>");
+    CRespondToCommand(client, "[SM]          You may use model aliases defined with sm_mrw_model_add.");
+    CRespondToCommand(client, "[SM]       -n <name>");
     CRespondToCommand(client, "[SM]          Allows you to define a name for the entity, which can be later used when referring to this reward.");
     CRespondToCommand(client, "[SM]          If not defined, the name will default to its corresponding ID number.");
-    CRespondToCommand(client, "[SM]       -o <{green}X Y Z{default}>");
+    CRespondToCommand(client, "[SM]       -o <X Y Z>");
     CRespondToCommand(client, "[SM]          Origin coordinates. If not provided client's location will be used.");
-    CRespondToCommand(client, "[SM]       -O <{green}#userid|name{default}>");
+    CRespondToCommand(client, "[SM]       -O <#userid|name>");
     CRespondToCommand(client, "[SM]          Set the origin coordinates to a player's location.");
-    CRespondToCommand(client, "[SM]       -D <{green}#reward_id|name{default}>");
+    CRespondToCommand(client, "[SM]       -D <#reward_id|name>");
     CRespondToCommand(client, "[SM]          Set the origin coordinates to a reward's location.");
-    CRespondToCommand(client, "[SM]       -p <{green}entity_property_script{default}>");
+    CRespondToCommand(client, "[SM]       -p <entity_property_script>");
     CRespondToCommand(client, "[SM]          Allows you to define a series of entity properties using this format:");
-    CRespondToCommand(client, "[SM]             [{green}prop_type{default}:]{green}key{default},[{green}type{default}=]{green}value{default}");
-    CRespondToCommand(client, "[SM]             {green}prop_type{default} must be {green}0{default} for {green}Prop_Data{default} (default) or {green}1{default} for {green}Prop_Send{default}.");
-    CRespondToCommand(client, "[SM]             {green}type{default} may be one of the following: {green}int float string ent{default} or {green}vec{default}.");
-    CRespondToCommand(client, "[SM]                For {green}vec{default}, {green}value{default} must be a series of 3 floats seperated by commas.");
-    CRespondToCommand(client, "[SM]             Multiple key,value pairs can be seperated by {green}&{default}'s.");
-    CRespondToCommand(client, "[SM]             Please do not set {green}m_iName{default} here. Use the {green}-n{default} switch to set a name.");
-    CRespondToCommand(client, "[SM]          You may use script aliases defined with {green}sm_mrw_script_add{default}.");
-    CRespondToCommand(client, "[SM]       -r <{green}RX RY RZ{default}>");
+    CRespondToCommand(client, "[SM]             [prop_type:]key,[type=]value");
+    CRespondToCommand(client, "[SM]             prop_type must be 0 for Prop_Data (default) or 1 for Prop_Send.");
+    CRespondToCommand(client, "[SM]             type may be one of the following: int float string ent or vec.");
+    CRespondToCommand(client, "[SM]                For vec, value must be a series of 3 floats seperated by commas.");
+    CRespondToCommand(client, "[SM]             Multiple key,value pairs can be seperated by &'s.");
+    CRespondToCommand(client, "[SM]             Please do not set m_iName here. Use the -n switch to set a name.");
+    CRespondToCommand(client, "[SM]          You may use script aliases defined with sm_mrw_script_add.");
+    CreateTimer(0.05, delayedAddUsage, client);
+}
+
+public Action:delayedAddUsage(Handle:Timer, any:client)
+{
+    CRespondToCommand(client, "[SM]       -r <RX RY RZ>");
     CRespondToCommand(client, "[SM]          Rotations for the entity. Cannot be relative.");
-    CRespondToCommand(client, "[SM]       -s <{green}script{default}>");
-    CRespondToCommand(client, "[SM]          A series of variables dispatched to the entity as an {green}overridescript{default} or individual keys to trigger.");
-    CRespondToCommand(client, "[SM]          A value of {green}null{default} will erase the script defined by a provided model alias.");
+    CRespondToCommand(client, "[SM]       -s <script>");
+    CRespondToCommand(client, "[SM]          A series of variables dispatched to the entity as an overridescript or individual keys to trigger.");
+    CRespondToCommand(client, "[SM]          A value of null will erase the script defined by a provided model alias.");
     CRespondToCommand(client, "[SM]          Format:");
-    CRespondToCommand(client, "[SM]             {green}overridescript{default}?{green}key{default}[,[{green}type{default}=]{green}value{default}]");
-    CRespondToCommand(client, "[SM]             {green}type{default} may be one of the following: {green}int float{default} or {green}string{default}.");
-    CRespondToCommand(client, "[SM]             Multiple key[,value]'s can be seperated on the right side of the {green}?{default} by {green}&{default}'s.");
-    CRespondToCommand(client, "[SM]          You may use script aliases defined with {green}sm_mrw_script_add{default}.");
-    CRespondToCommand(client, "[SM]       -t <{green}respawn_time{default}>");
+    CRespondToCommand(client, "[SM]             overridescript?key[,[type=]value]");
+    CRespondToCommand(client, "[SM]             type may be one of the following: int float or string.");
+    CRespondToCommand(client, "[SM]             Multiple key[,value]'s can be seperated on the right side of the ? by &'s.");
+    CRespondToCommand(client, "[SM]          You may use script aliases defined with sm_mrw_script_add.");
+    CRespondToCommand(client, "[SM]       -t <respawn_time>");
     CRespondToCommand(client, "[SM]             The fractional seconds until the reward respawns.");
-    CRespondToCommand(client, "[SM]             A value of {green}0{default} will never respawn.");
-    CRespondToCommand(client, "[SM]             A value of {green}-1{default} will use the value of {green}sm_mrw_respawn_time{default}.");
-    CRespondToCommand(client, "[SM]       -T <{green}SX SY SZ interval{default}>");
-    CRespondToCommand(client, "[SM]          Set the reward to rotate every {green}interval{default}.");
-    CRespondToCommand(client, "[SM]          {green}interval{default} is in fractional seconds.");
-    CRespondToCommand(client, "[SM]       -U   {green}model{default}, {green}script{default}, and {green}entity_property{default} aliases will not be evaluated until spawn time.");
+    CRespondToCommand(client, "[SM]             A value of 0 will never respawn.");
+    CRespondToCommand(client, "[SM]             A value of -1 will use the value of sm_mrw_respawn_time.");
+    CRespondToCommand(client, "[SM]       -T <SX SY SZ interval>");
+    CRespondToCommand(client, "[SM]          Set the reward to rotate every interval.");
+    CRespondToCommand(client, "[SM]          interval is in fractional seconds.");
+    CRespondToCommand(client, "[SM]       -U   model, script, and entity_property aliases will not be evaluated until spawn time.");
     CRespondToCommand(client, "[SM]       -u   Unsets the -U switch, causing all aliases to be evaluated now.");
-    CRespondToCommand(client, "[SM]       -X   Sets the command for when the reward is {green}kill{default}ed to {green}command{default}.");
-    CRespondToCommand(client, "[SM]               To set both {green}pickup{default} and {green}kill{default} commands requires an extra call to {green}sm_mrw_modify{default}.");
-    CRespondToCommand(client, "[SM]               If {green}respawn_method{default} is set to {green}kill{default} and {green}-X{default} is not present, {green}command{default} will be used for both {green}pickup{default} and {green}kill{default}.");
-    CRespondToCommand(client, "[SM]       -P   Sets {green}respawn_method{default} to {green}pickup{default}.");
-    CRespondToCommand(client, "[SM]       -S   Sets {green}respawn_method{default} to {green}static{default}.");
-    CRespondToCommand(client, "[SM]       -C   Sets {green}respawn_method{default} to {green}constant{default}.");
-    CRespondToCommand(client, "[SM]       -H   Adds {green}hurt{default} to the current {green}respawn_method{default}.");
-    CRespondToCommand(client, "[SM]       -K   Adds {green}kill{default} to the current {green}respawn_method{default}.");
-    CRespondToCommand(client, "[SM]       -N   Removes {green}touch{default} events from the current {green}respawn_method{default}.");
+    CRespondToCommand(client, "[SM]       -X   Sets the command for when the reward is killed to command.");
+    CRespondToCommand(client, "[SM]               To set both pickup and kill commands requires an extra call to sm_mrw_modify.");
+    CRespondToCommand(client, "[SM]               If respawn_method is set to kill and -X is not present, command will be used for both pickup and kill.");
+    CRespondToCommand(client, "[SM]       -P   Sets respawn_method to pickup.");
+    CRespondToCommand(client, "[SM]       -S   Sets respawn_method to static.");
+    CRespondToCommand(client, "[SM]       -C   Sets respawn_method to constant.");
+    CRespondToCommand(client, "[SM]       -H   Adds hurt to the current respawn_method.");
+    CRespondToCommand(client, "[SM]       -K   Adds kill to the current respawn_method.");
+    CRespondToCommand(client, "[SM]       -N   Removes touch events from the current respawn_method.");
     CRespondToCommand(client, "[SM]       -R   Automatically release the reward from the plugin imediately after spawning it.");
+    return Plugin_Stop;
+}
+
+RespondModifyUsage(client)
+{
+    CRespondToCommand(client, "[SM] Usage: sm_mrw_modify <#reward_id|name> [OPTIONS ...] [command ...]");
+    CRespondToCommand(client, "[SM]    OPTIONS is exactly the same as sm_mrw_add with the following exceptions:");
+    CRespondToCommand(client, "[SM]       -o - Origin coordinates default to the reward's if not specified.");
+    CRespondToCommand(client, "[SM]       -r - Rotation angles can now be relative.");
+    CRespondToCommand(client, "[SM]       -h - No help switch, because it breaks the flow of this command.");
+    CRespondToCommand(client, "[SM]    Use sm_mrw_add -h for a detailed paragraph about the OPTIONS.");
+    CRespondToCommand(client, "[SM]    If any combination of options that result in a conflict are used, an error explaining why that specific option could not be set will be displayed. Other options will still be applied.");
+    CRespondToCommand(client, "[SM]    If any multi-argument options are missing arguments, the command will stop where the error occured. This might cause undefined behaviour, and you will need to manually sm_mrw_respawn the reward.");
+}
+
+RespondTriggerUsage(client)
+{
+    CRespondToCommand(client,"[SM] Usage: sm_mrw_trigger <#reward_id|name> [OPTIONS ...] [#userid|name]");
+    CRespondToCommand(client,"[SM]    OPTIONS:");
+    CRespondToCommand(client,"[SM]       -R   Do not kill and respawn the reward.");
+    CRespondToCommand(client,"[SM]       -t <respawn_time>");
+    CRespondToCommand(client,"[SM]          Temporarily override the reward's respawn_time setting.");
+    CRespondToCommand(client,"[SM]       -X   Treat the trigger as a hurt or kill event.");
+}
+
+public OnPluginStart()
+{
+    LoadTranslations("common.phrases");
+    CreateConVar("sm_mrw_version", VERSION, "Map Rewards Version",FCVAR_SPONLY|FCVAR_REPLICATED|FCVAR_NOTIFY|FCVAR_DONTRECORD);
+    
+    c_enable = CreateConVar("sm_mrw_enable", "1.0", "0 = disabled. 1 = enabled", 0, true, 0.0, true, 1.0);
+    c_respawnTime = CreateConVar("sm_mrw_respawn_time", "5.0", "Default seconds until a reward will respawn.", 0, true, 0.0);
+    c_cleanUp = CreateConVar("sm_mrw_cleanup", "8", "When to release and kill all rewards. OR desired values together. 0: never, 1: plugin end, 2: map start, 4: round start, 8: on auto load, 16: on manual load", 0, true, 0.0, true, 31.0);
+    c_autoLoad = CreateConVar("sm_mrw_autoload", "2", "When to auto load map or server cfg saves. OR desired values together. 0: never, 1: map start (maprewards/server.cfg), 2: map start (maprewards/<map>.cfg), 4: round start (maprewards/<map>.cfg), 8: round start (maprewards/server.cfg)", 0, true, 0.0, true, 7.0);
+    c_autoSave = CreateConVar("sm_mrw_autosave", "0", "When to auto save map cfg. OR desired values together. 0: never 1: plugin end, 2: map start (basically map end; internal data is still intact until cleanup), 4: round start (basically round end), 8: on clean up, 16: on every edit/addition that's not from the server, 32: on remove, 64: always backup first", 0, true, 0.0, true, 127.0);
+    c_basicFlag = CreateConVar("sm_mrw_flag_basic", "i", "Admin flag required for basic mrw commands.", 0);
+    c_createFlag = CreateConVar("sm_mrw_flag_create", "m", "Admin flag required for creating or modifying rewards.", 0);
+    c_extendedFlag = CreateConVar("sm_mrw_flag_extended", "m", "Admin flag required for all sm_mrw_cfg_* commands except for load and list.", 0);
+
+    RegConsoleCmd("sm_mrw_info", infoSpawnPoint, "Displays info about a specific reward spawn point.");
+    RegConsoleCmd("sm_mrw_add", addSpawnPoint, "Sets a spawn point on the map for a reward.");
+    RegConsoleCmd("sm_mrw_modify", modifySpawnPoint, "Modify a reward spawn point.");
+    RegConsoleCmd("sm_mrw_remove", removeSpawnPoint, "Removes a reward on the map (starting with 0, not 1).");
+    RegConsoleCmd("sm_mrw_removeall", removeSpawnPoints, "Removes all rewards on the map.");
+    RegConsoleCmd("sm_mrw_model_reload", reloadAlias, "Reloads 'cfg/maprewards/aliases.cfg'.");
+    RegConsoleCmd("sm_mrw_model_add", addAlias, "Adds a model alias. Does not save.");
+    RegConsoleCmd("sm_mrw_model_save", saveAlias, "Saves the current model aliases to 'cfg/maprewards/aliases.cfg'.");
+    RegConsoleCmd("sm_mrw_model_list", listAlias, "Lists all current model aliases.");
+    RegConsoleCmd("sm_mrw_script_reload", reloadScript, "Reloads 'cfg/maprewards/scripts.cfg'.");
+    RegConsoleCmd("sm_mrw_script_add", addScript, "Adds a script alias. Does not save.");
+    RegConsoleCmd("sm_mrw_script_save", saveScript, "Saves the current scripts to 'cfg/maprewards/scripts.cfg'.");
+    RegConsoleCmd("sm_mrw_script_list", listScript, "Lists all current scripts.");
+    RegConsoleCmd("sm_mrw_cfg_save", writeCFG, "Saves current reward spawn points to a cfg file for later reuse.");
+    RegConsoleCmd("sm_mrw_cfg_load", loadCFG, "Loads a saved maprewards cfg file.");
+    RegConsoleCmd("sm_mrw_cfg_list", listSavedCFG, "Lists all saved maprewards cfg files.");
+    RegConsoleCmd("sm_mrw_cfg_delete", deleteSavedCFG, "Deletes a saved maprewards cfg file.");
+    RegConsoleCmd("sm_mrw_cfg_purge", purgeSavedCFG, "Deletes all auto-save backup maprewards cfg files.");
+    RegConsoleCmd("sm_mrw_tp", tpPlayer, "Teleports you to the provided reward.");
+    RegConsoleCmd("sm_mrw_kill", killEntity, "Kills an entity by its edict ID. To be used with entities after releasing them.");
+    RegConsoleCmd("sm_mrw_respawn", manuallyRespawnReward, "Respawn or reactivate a reward early.");
+    RegConsoleCmd("sm_mrw_trigger", mapRewardTrigger, "Triggers a reward remotely.");
+    RegAdminCmd("sm_exec2", exec2CFG, ADMFLAG_SLAY, "Executes a cfg file provided as the second argument. Accepts a first argument, but is ignored unless the third argument is '0'. If the third argument is anything else, it will be used instead of the player's name. Any additional arguments will be used instead of the default message.");
+    RegAdminCmd("sm_teleplus", teleportCmd, ADMFLAG_SLAY, "Teleport a player to a set of coordinates with optional rotation and velocity. Relative coords, angles, and velocity are allowed.");
+    
+    HookEvent("teamplay_round_start", OnRoundStart);//, EventHookMode_PostNoCopy);
+
+    HookConVarChange(c_enable, cvarEnableChange);
+    HookConVarChange(c_respawnTime, cvarChange);
+    HookConVarChange(c_cleanUp, cvarCleanChange);
+    HookConVarChange(c_autoLoad, cvarLoadChange);
+    HookConVarChange(c_autoSave, cvarSaveChange);
+    HookConVarChange(c_basicFlag, cvarBasicFlagChange);
+    HookConVarChange(c_createFlag, cvarCreateFlagChange);
+    HookConVarChange(c_extendedFlag, cvarExtendedFlagChange);
+    
+    aliasCount = loadAliases();
+    scriptCount = loadScripts();
+}
+
+public cvarEnableChange(Handle:convar, const String:oldValue[], const String:newValue[])
+{
+    g_enable = StringToInt(newValue);
+    if ((StringToInt(oldValue)) && (!g_enable))
+        killRewards();
+    else if ((!StringToInt(oldValue)) && (g_enable))
+        spawnRewards();
+}
+
+public cvarChange(Handle:convar, const String:oldValue[], const String:newValue[])
+{
+    g_respawnTime = StringToFloat(newValue);
+}
+
+public cvarCleanChange(Handle:convar, const String:oldValue[], const String:newValue[])
+{
+    g_cleanUp = StringToInt(newValue);
+}
+
+public cvarLoadChange(Handle:convar, const String:oldValue[], const String:newValue[])
+{
+    g_autoLoad = StringToInt(newValue);
+}
+
+public cvarSaveChange(Handle:convar, const String:oldValue[], const String:newValue[])
+{
+    g_autoSave = StringToInt(newValue);
+}
+
+public cvarBasicFlagChange(Handle:convar, const String:oldValue[], const String:newValue[])
+{
+    g_basicFlag = 0;
+    for (new i = 0, j = strlen(newValue);i < j;i++)
+        orFlag(g_basicFlag,newValue[i]);
+}
+
+public cvarCreateFlagChange(Handle:convar, const String:oldValue[], const String:newValue[])
+{
+    g_createFlag = 0;
+    for (new i = 0, j = strlen(newValue);i < j;i++)
+        orFlag(g_createFlag,newValue[i]);
+}
+
+public cvarExtendedFlagChange(Handle:convar, const String:oldValue[], const String:newValue[])
+{
+    g_extendedFlag = 0;
+    for (new i = 0, j = strlen(newValue);i < j;i++)
+        orFlag(g_extendedFlag,newValue[i]);
+}
+
+public OnPluginEnd()
+{
+    cleanUp(CLEAN_PLUG_END,autoSave(SAVE_PLUG_END));
+}
+
+public OnMapStart()
+{   // Get cvar values.
+    g_enable = GetConVarInt(c_enable);
+    g_respawnTime = GetConVarFloat(c_respawnTime);
+    g_cleanUp = GetConVarInt(c_cleanUp);
+    g_autoLoad = GetConVarInt(c_autoLoad);
+    g_autoSave = GetConVarInt(c_autoSave);
+    
+    autoLoad(LOAD_MAP_START|LOAD_PLUG_START,cleanUp(CLEAN_MAP_START,autoSave(SAVE_MAP_START)));
+}
+
+public OnRoundStart(Handle:event, const String:name[], bool:dontBroadcast)
+{
+    //CreateTimer(5.0, timerRespawnReward, -1);
+    autoLoad(LOAD_ROUND_START|LOAD_ROUND_START_B,cleanUp(CLEAN_ROUND_START,autoSave(SAVE_ROUND_START)));
+    spawnRewards();
+}
+
+public Action:teleportCmd(client, args)
+{
+    decl String:targetp[65];
+    new Float:coordsC[3][3];
+    decl String:target_name[MAX_TARGET_LENGTH];
+    decl target_list[MAXPLAYERS];
+    decl bool:tn_is_ml;
+    new target_count = 0;
+    new neededArgs = args;
+    new nextArg = 2;
+    if (args > 1)
+    {
+        GetCmdArg(1,targetp,65); // Thanks to C++ std::regex I'm superstitious about grabbing things out of order...
+        decl String:temp[MAX_TARGET_LENGTH];
+        GetCmdArg(2,temp,MAX_TARGET_LENGTH);     // Otherwise, this would be the only GetCmdArg call in this block
+        if (strcmp(temp,"@aim") == 0)
+        {
+            if ((client == 0) || (!IsClientInGame(client)))
+            {
+                RespondToCommand(client,"[SM] Error: You must be in game to use \"@aim\" coordinates.");
+                return Plugin_Handled;
+            }
+            SetTeleportEndPoint(client,coordsC[0]);
+            neededArgs += 2;
+            nextArg++;
+        }
+        else if ((args == 2) || (args == 5) || (args == 8))
+        {
+            if ((target_count = ProcessTargetString(temp,client,target_list,1,COMMAND_FILTER_ALIVE,target_name,MAX_TARGET_LENGTH,tn_is_ml)) < 1)
+            {
+                ReplyToTargetError(client,target_count);
+                return Plugin_Handled;
+            }
+            GetClientAbsOrigin(target_list[0],coordsC[0]);
+            neededArgs += 2;
+            nextArg++;
+        }
+    }
+    if ((neededArgs != 4) && (neededArgs != 7) && (neededArgs != 10))
+    {
+        RespondToCommand(client,"[SM] Usage: sm_teleplus <#userid|name> <X Y Z> [RX RY RZ] [VX VY VZ]");
+        return Plugin_Handled;
+    }
+    target_count = 0;
+    if ((target_count = ProcessTargetString(targetp,client,target_list,MAXPLAYERS,COMMAND_FILTER_ALIVE,target_name,MAX_TARGET_LENGTH,tn_is_ml)) < 1)
+    {
+        ReplyToTargetError(client,target_count);
+        return Plugin_Handled;
+    }
+    new Float:coordsO[3][3];
+    new bool:relative[3][3];
+    for (new h = nextArg-2;nextArg <= args;h++)
+    {
+        for (new i = 0;i < 3;i++)
+        {
+            GetCmdArg(nextArg++,targetp,16);
+            if (targetp[0] == '~')
+            {
+                relative[h][i] = true;
+                if (strlen(targetp) > 1)
+                {
+                    StrErase(targetp,0,1);
+                    coordsC[h][i] += StringToFloat(targetp);
+                }
+            }
+            else
+                coordsC[h][i] = StringToFloat(targetp);
+        }
+    }
+    for (new i = 0;i < target_count;i++)
+    {
+        GetClientAbsOrigin(target_list[i],coordsO[0]);
+        GetClientEyeAngles(target_list[i],coordsO[1]);
+        GetEntPropVector(target_list[i],Prop_Data,"m_vecVelocity",coordsO[2]);
+        for (new h = 0;h < 3;h++)
+            for (new o = 0;o < 3;o++)
+                if (relative[h][o])
+                    coordsC[h][o] += coordsO[h][o];
+        TeleportEntity(target_list[i], coordsC[0], coordsC[1], coordsC[2]);
+    }
+    return Plugin_Handled;
+}
+
+public Action:exec2CFG(client, args)
+{
+    if (args > 2)
+    {
+        decl String:targetp[65];
+        decl String:target_name[MAX_TARGET_LENGTH];
+        decl target_list[MAXPLAYERS];
+        decl bool:tn_is_ml;
+        GetCmdArg(1,targetp,65);
+        decl String:opt_name[MAX_TARGET_LENGTH];
+        GetCmdArg(3,opt_name,MAX_TARGET_LENGTH);
+        new String:msg[250];
+        if (args > 3)
+        {
+            decl String:buffer[250];
+            for (new i = 4; i <= args; i++)
+            {
+                GetCmdArg(i,buffer,250);
+                StrCat(msg,250,buffer);
+                StrCat(msg,250," ");
+            }
+        }
+        else
+        {
+            msg = "has earned a reward!";
+        }
+        if (strcmp(opt_name,"0") == 0)
+        {
+            if (ProcessTargetString(targetp,client,target_list,MAXPLAYERS,COMMAND_FILTER_ALIVE,target_name,sizeof(target_name),tn_is_ml) <= 0)
+                target_name = "Everyone";
+        }
+        else
+            target_name = opt_name;
+        Format(msg,250,"%c%s%c %s",0x04,target_name,0x01,msg);
+        SayText2(client,msg);
+        //CPrintToChatAll("%c%s%c %s",0x04,target_name,0x01,msg);
+        CPrintToServer("%s %s",target_name,msg);
+    }
+    if (args > 1)
+    {
+        decl String:cfg[MAXINPUT];
+        GetCmdArg(2,cfg,MAXINPUT);
+        ServerCommand("exec %s",cfg);
+    }
+    return Plugin_Handled;
+}
+
+public Action:listSavedCFG(client, args)
+{
+    if (!handleClientAccess(client,g_basicFlag))
+        return Plugin_Handled;
+    decl String:dir[128];
+    new bool:topdir = true;
+    dir = "cfg/maprewards/";
+    if (args > 0)
+    {
+        decl String:buffer[112];
+        GetCmdArg(1,buffer,112);
+        while ((buffer[0] == '/') || (buffer[0] == '\\'))
+            StrErase(buffer,0);
+        if (StrFind(buffer,"..") > -1)
+        {
+            RespondToCommand(client,"[SM] Error: Illegal path.");
+            return Plugin_Handled;
+        }
+        StrCat(dir,128,buffer);
+        topdir = false;
+    }
+    new Handle:cfgs = OpenDirectory(dir);
+    if (cfgs == INVALID_HANDLE)
+    {
+        RespondToCommand(client,"[SM] No saved CFG files found in '%s'.",dir);
+        RespondToCommand(client,"[SM] Usage: sm_mrw_cfg_list [directory] - directory starts in 'cfg/maprewards/'.");
+        return Plugin_Handled;
+    }
+    decl String:filename[128];
+    decl FileType:filetype;
+    new total = 0;
+    while (ReadDirEntry(cfgs,filename,128,filetype))
+    {
+        if ((filetype != FileType_File) || (strcmp(filename,".") == 0) || (strcmp(filename,"..") == 0) || ((topdir) && ((strcmp(filename,"scripts.cfg") == 0) || (strcmp(filename,"aliases.cfg") == 0))))
+            continue;
+        RespondToCommand(client,"[SM] [%d] '%s'",++total,filename);
+    }
+    RespondToCommand(client,"[SM] Found %d saves in '%s'.",total,dir);
+    return Plugin_Handled;
+}
+
+public Action:deleteSavedCFG(client, args)
+{
+    if (!handleClientAccess(client,g_extendedFlag))
+        return Plugin_Handled;
+    decl String:filename[128];
+    filename = "cfg/maprewards/";
+    if (args < 1)
+    {
+        RespondToCommand(client,"[SM] Usage: sm_mrw_cfg_delete <cfg_file> - Path starts in 'cfg/maprewards/'.");
+        return Plugin_Handled;
+    }
+    decl String:buffer[112];
+    GetCmdArg(1,buffer,112);
+    while ((buffer[0] == '/') || (buffer[0] == '\\'))
+        StrErase(buffer,0);
+    if (StrFind(buffer,"..") > -1)
+    {
+        RespondToCommand(client,"[SM] Error: Illegal path.");
+        return Plugin_Handled;
+    }
+    StrCat(filename,128,buffer);
+    if (!FileExists(filename))
+    {
+        RespondToCommand(client,"[SM] Error: '%s' file does not exist.",filename);
+        return Plugin_Handled;
+    }
+    if (DeleteFile(filename))
+        RespondToCommand(client,"[SM] Deleted '%s'.",filename);
+    else
+        RespondToCommand(client,"[SM] Error: Cannot delete file '%s'.",filename);
+    return Plugin_Handled;
+}
+
+public Action:purgeSavedCFG(client, args)
+{
+    if (!handleClientAccess(client,g_extendedFlag))
+        return Plugin_Handled;
+    if (DirExists("cfg/maprewards/backup"))
+    {
+        if (RemoveDir("cfg/maprewards/backup"))
+            RespondToCommand(client,"[SM] Successfully purged all backup maprewards cfg files.");
+        else
+            RespondToCommand(client,"[SM] Error: Unable to delete 'cfg/maprewards/backup/'.");
+    }
+    else
+        RespondToCommand(client,"[SM] No backups to purge.");
+    return Plugin_Handled;
+}
+
+public Action:tpPlayer(client, args)
+{
+    if (!handleClientAccess(client,g_basicFlag))
+        return Plugin_Handled;
+    if (args < 1)
+    {
+        RespondToCommand(client,"[SM] Usage: sm_mrw_tp <#id|name> [#userid|name] [X Y Z] [RX RY RZ] [VX VY VZ]");
+        return Plugin_Handled;
+    }
+    decl String:target[32];
+    decl String:target_name[MAX_NAME_LENGTH];
+    decl target_list[MAXPLAYERS];
+    decl target_count;
+    decl bool:tn_is_ml;
+    GetCmdArg(1,target,32);
+    new tempID = getRewardID(target,client);
+    if (!isValidReward(tempID))
+    {
+        RespondToCommand(client, "[SM] Error: Unknown reward '%s'",target);
+        return Plugin_Handled;
+    }
+    new Float:rCoords[4][3];
+    if (IsValidEntity(spawnEnts[tempID]))
+    {
+        GetEntPropVector(spawnEnts[tempID],Prop_Data,"m_vecOrigin",rCoords[0]);
+        GetEntPropVector(spawnEnts[tempID],Prop_Data,"m_angRotation",rCoords[1]);
+    }
+    else
+    {
+        rCoords[0] = defSpawnCoords[tempID];
+        rCoords[1] = defSpawnAngles[tempID];
+    }
+    new bool:relativeV[4];
+    new nextArg = 2;
+    switch (args)
+    {
+        case 1, 4, 7, 10:
+        {
+            target_list[0] = client;
+            target_count = 1;
+        }
+        case 2, 5, 8, 11:
+        {
+            GetCmdArg(nextArg++,target,32);        
+            if ((target_count = ProcessTargetString(
+                    target,
+                    client,
+                    target_list,
+                    MAXPLAYERS,
+                    COMMAND_FILTER_ALIVE,
+                    target_name,
+                    sizeof(target_name),
+                    tn_is_ml)) <= 0)
+            {
+                ReplyToTargetError(client, target_count);
+                return Plugin_Handled;
+            }
+        }
+        default:
+        {
+            RespondToCommand(client,"[SM] Usage: sm_mrw_tp <#id|name> [#userid|name] [X Y Z] [RX RY RZ] [VX VY VZ]");
+            return Plugin_Handled;
+        }
+    }
+    decl String:temp[16];
+    for (new h = 0;nextArg <= args;h++)
+    {
+        for (new i = 0;i < 3;i++)
+        {
+            GetCmdArg(nextArg++,temp,16);
+            if (temp[0] == '~')
+            {
+                if (h == 2)
+                    relativeV[3] = relativeV[i] = true;
+                if (strlen(temp) > 1)
+                {
+                    StrErase(temp,0,1);
+                    rCoords[h][i] += StringToFloat(temp);
+                }
+            }
+            else
+                rCoords[h][i] = StringToFloat(temp);
+        }
+    }
+    rCoords[3] = rCoords[2];
+    for (new i = 0;i < target_count;i++)
+    {
+        if (relativeV[3])
+        {
+            GetEntPropVector(target_list[i],Prop_Data,"m_vecVelocity",rCoords[3]);
+            for (new h = 0;h < 3;h++)
+                if (relativeV[h])
+                    rCoords[3][h] += rCoords[2][h];
+        }
+        TeleportEntity(target_list[i], rCoords[0], rCoords[1], rCoords[3]);
+    }
+    return Plugin_Handled;
+}
+
+public Action:infoSpawnPoint(client, args)
+{
+    if (!handleClientAccess(client,g_basicFlag))
+        return Plugin_Handled;
+    if (args < 1)
+    {
+        RespondToCommand(client,"[SM] Usage: sm_mrw_info <#id|name>");
+        return Plugin_Handled;
+    }
+    decl String:buffer[32];
+    GetCmdArg(1,buffer,32);
+    new tempID = getRewardID(buffer,client);
+    if (!isValidReward(tempID))
+    {
+        RespondToCommand(client, "[SM] Unknown reward '%s'",buffer);
+        return Plugin_Handled;
+    }
+    decl String:cmdC[MAXCMDLEN];
+    buildRewardCmd(tempID,cmdC,MAXCMDLEN);
+    Format(buffer,32,"\nsm_mrw_modify %d ",tempID);
+    ReplaceStringEx(cmdC,MAXCMDLEN,"\nsm_mrw_modify -1 ",buffer);
+    CRespondToCommand(client,"[SM] Info on #%d(%d): X=%.1f Y=%.1f Z=%.1f RX=%.1f RY=%.1f RZ=%.1f",tempID,spawnEnts[tempID],defSpawnCoords[tempID][0],defSpawnCoords[tempID][1],defSpawnCoords[tempID][2],defSpawnAngles[tempID][0],defSpawnAngles[tempID][1],defSpawnAngles[tempID][2]);
+    if (((tempID > 0) && (StringToInt(entName[tempID]) != tempID)) || ((tempID == 0) && (strcmp(entName[tempID],"0") != 0)))
+        CRespondToCommand(client,"[SM] Name: %s",entName[tempID]);
+    if (unEvaluate[tempID])
+        CRespondToCommand(client,"[SM] Aliases will be evaluated at spawn time.");
+    if (strcmp(entType[tempID],"prop_physics_override") != 0)
+        CRespondToCommand(client,"[SM] Entity Class: %s",entType[tempID]);
+    if (strlen(model[tempID]) > 0)
+        CRespondToCommand(client,"[SM] Model: %s",model[tempID]);
+    CRespondToCommand(client,"[SM] Spawn scripts: [%s] [%s]",script[tempID][0],script[tempID][1]);
+    if (entSpinInt[tempID] > 0.0)
+        CRespondToCommand(client,"[SM] Rotate [%.1f %.1f %.1f] every %.1f seconds.",entSpin[tempID][0],entSpin[tempID][1],entSpin[tempID][2],entSpinInt[tempID]);
+    if (entOverlay[tempID] != FULLSPECTRUM)
+    {
+        decl colors[4];
+        colors[0] = (entOverlay[tempID] & 0x000000FF);
+        colors[1] = (entOverlay[tempID] & 0x0000FF00) >> 8;
+        colors[2] = (entOverlay[tempID] & 0x00FF0000) >> 16;
+        colors[3] = (entOverlay[tempID] & 0xFF000000) >> 24;
+        for (new i = 0;i < 4;i++)
+            if (colors[i] < 0)
+                colors[i] = (colors[i] % 256) + 256;
+        CRespondToCommand(client,"[SM] Glow Color: %d (%d,%d,%d,%d)",entOverlay[tempID],colors[0],colors[1],colors[2],colors[3]);
+    }
+    new String:respawnStr[42];
+    if (respawnMethod[tempID] & HOOK_TOUCH)
+        StrCat(respawnStr,42," touch");
+    if (respawnMethod[tempID] & HOOK_HURT)
+        StrCat(respawnStr,42," hurt");
+    if (respawnMethod[tempID] & HOOK_KILL)
+        StrCat(respawnStr,42," kill");
+    if (respawnMethod[tempID] & HOOK_STATIC)
+        StrCat(respawnStr,42," static");
+    if (respawnMethod[tempID] & HOOK_CONSTANT)
+        StrCat(respawnStr,42," constant");
+    if (respawnMethod[tempID] & HOOK_DEACTIVE)
+        StrCat(respawnStr,42," inactive");
+    if (strlen(respawnStr) < 1)
+        respawnStr = " nohook";
+    StrErase(respawnStr,0,1);
+    CRespondToCommand(client,"[SM] Respawn Method: %d (%s).",respawnMethod[tempID],respawnStr);
+    if (entHealth[tempID] > 0.0)
+        CRespondToCommand(client,"[SM] Health: %.2f",entHealth[tempID]);
+    if (strlen(rCommand[tempID][0]) > 0)
+        CRespondToCommand(client,"[SM] Touch Command: %s",rCommand[tempID][0]);
+    if (strlen(rCommand[tempID][1]) > 0)
+        CRespondToCommand(client,"[SM] Kill Command: %s",rCommand[tempID][1]);
+    RespondToCommand(client,"[SM] %s",cmdC);
+    return Plugin_Handled;
+}
+
+public Action:listAlias(client, args)
+{
+    if (!handleClientAccess(client,g_basicFlag))
+        return Plugin_Handled;
+    for (new i = 0;i < aliasCount;i++)
+        CRespondToCommand(client,"[SM] #%d: '%s' = '%s' (%s) : '%s' : '%s'",i,aliases[i][0],aliases[i][1],aliases[i][2],aliases[i][3],aliases[i][4]);
+    return Plugin_Handled;
+}
+
+public Action:reloadAlias(client, args)
+{
+    if (!handleClientAccess(client,g_basicFlag))
+        return Plugin_Handled;
+    aliasCount = loadAliases();
+    RespondToCommand(client,"[SM] Successfully loaded %d aliases.",aliasCount);
+    return Plugin_Handled;
+}
+
+public Action:addAlias(client, args)
+{
+    if (!handleClientAccess(client,g_basicFlag))
+        return Plugin_Handled;
+    if (args < 2)
+    {
+        RespondToCommand(client, "[SM] Usage: sm_mrw_model_add <name> <model> [entity_type] [overridescript] [entity_properties]");
+        return Plugin_Handled;
+    }
+    decl String:buffer[MAXINPUT];
+    GetCmdArg(1, buffer, MAXINPUT);
+    strcopy(aliases[aliasCount][0],MAXINPUT,buffer);
+    new marg = args;
+    if (marg > 5)
+        marg = 5;
+    for (new i = 2;i <= marg;i++)
+    {
+        GetCmdArg(i, buffer, sizeof(buffer));
+        if ((strcmp(buffer,"0") != 0) && (strcmp(buffer,"null") != 0))
+            strcopy(aliases[aliasCount][i-1],MAXINPUT,buffer);
+    }
+    CRespondToCommand(client, "[SM] Added alias #%d '%s' as '%s' (%s). Override: '%s' EntProp: '%s'.",aliasCount,aliases[aliasCount][0],aliases[aliasCount][1],aliases[aliasCount][2],aliases[aliasCount][3],aliases[aliasCount][4]);
+    aliasCount++;
+    return Plugin_Handled;
+}
+
+public Action:saveAlias(client, args)
+{
+    if (!handleClientAccess(client,g_basicFlag))
+        return Plugin_Handled;
+    if (writeAliases())
+        RespondToCommand(client, "[SM] Successfully saved 'cfg/maprewards/aliases.cfg' file.");
+    else
+        RespondToCommand(client, "[SM] Some kind of error has occurred trying to save 'cfg/maprewards/aliases.cfg' file.");
+    return Plugin_Handled;
+}
+
+public Action:listScript(client, args)
+{
+    if (!handleClientAccess(client,g_basicFlag))
+        return Plugin_Handled;
+    for (new i = 0;i < scriptCount;i++)
+        CRespondToCommand(client,"[SM] #%d: '%s' = '%s'",i,scripts[i][0],scripts[i][1]);
+    return Plugin_Handled;
+}
+
+public Action:reloadScript(client, args)
+{
+    if (!handleClientAccess(client,g_basicFlag))
+        return Plugin_Handled;
+    scriptCount = loadScripts();
+    RespondToCommand(client,"[SM] Successfully loaded %d scripts.",scriptCount);
+    return Plugin_Handled;
+}
+
+public Action:addScript(client, args)
+{
+    if (!handleClientAccess(client,g_basicFlag))
+        return Plugin_Handled;
+    if (args < 2)
+    {
+        RespondToCommand(client, "[SM] Usage: sm_mrw_script_add <name> <script>");
+        return Plugin_Handled;
+    }
+    decl String:buffer[MAXINPUT];
+    GetCmdArg(1, buffer, sizeof(buffer));
+    strcopy(scripts[scriptCount][0],MAXINPUT,buffer);
+    GetCmdArg(2, buffer, sizeof(buffer));
+    strcopy(scripts[scriptCount][1],MAXINPUT,buffer);
+    CRespondToCommand(client, "[SM] Added script #%d '%s' as '%s'.",scriptCount,scripts[scriptCount][0],scripts[scriptCount][1]);
+    scriptCount++;
+    return Plugin_Handled;
+}
+
+public Action:saveScript(client, args)
+{
+    if (!handleClientAccess(client,g_basicFlag))
+        return Plugin_Handled;
+    if (writeScripts())
+        RespondToCommand(client, "[SM] Successfully saved 'cfg/maprewards/scripts.cfg' file.");
+    else
+        RespondToCommand(client, "[SM] Some kind of error has occurred trying to save 'cfg/maprewards/scripts.cfg' file.");
+    return Plugin_Handled;
+}
+
+public Action:writeCFG(client, args)
+{
+    if (!handleClientAccess(client,g_extendedFlag))
+        return Plugin_Handled;
+    if (args < 1)
+    {
+        RespondWriteUsage(client);
+        return Plugin_Handled;
+    }
+    decl String:buffer[MAXINPUT];
+    new nextArg = 1;
+    new bool:lastArg = false;
+    new bool:rewards[MAXSPAWNPOINT] = { true, ... };
+    new bool:relative = false;
+    new bool:force = false;
+    new Float:originC[3];
+    if ((client > 0) && (IsClientInGame(client)))
+        GetClientAbsOrigin(client,originC);
+    new bool:err = false;
+    for (;nextArg <= args;nextArg++)
+    {
+        if (nextArg == args)
+            lastArg = true;
+        GetCmdArg(nextArg,buffer,MAXINPUT);
+        if (buffer[0] == '-')
+        {
+            if (buffer[1] == '-')
+            {
+                nextArg++;
+                break;
+            }
+            switch (buffer[1])
+            {
+                case 'R': // Relative
+                {
+                    relative = true;
+                }
+                case 'E': // Exclude reward #
+                {
+                    if (lastArg)
+                        err = true;
+                    else
+                    {
+                        GetCmdArg(++nextArg,buffer,MAXINPUT);
+                        decl range[2];
+                        if (!getRewardRange(buffer,range,client))
+                            for (new i = range[0];i <= range[1];i++)
+                                rewards[i] = false;
+                    }
+                }
+                case 'o': // Origin
+                {
+                    if (lastArg)
+                        err = true;
+                    else
+                    {
+                        GetCmdArg(nextArg+1,buffer,MAXINPUT);
+                        if (strcmp(buffer,"@aim") == 0)
+                        {
+                            nextArg++;
+                            if ((client > 0) && (IsClientInGame(client)))
+                                SetTeleportEndPoint(client,originC);
+                        }
+                        else if ((args-nextArg) < 3)
+                            err = true;
+                        else
+                        {
+                            for (new i = 0;i < 3;i++)
+                            {
+                                GetCmdArg(++nextArg,buffer,17);
+                                if (buffer[0] == '~')
+                                {
+                                    if (strlen(buffer) > 1)
+                                    {
+                                        StrErase(buffer,0,1);
+                                        originC[i] += StringToFloat(buffer);
+                                    }
+                                }
+                                else
+                                    originC[i] = StringToFloat(buffer);
+                            }
+                        }
+                    }
+                }
+                case 'O': // Set origin to anOther player
+                {
+                    if (lastArg)
+                        err = true;
+                    else
+                    {
+                        GetCmdArg(++nextArg,buffer,MAXINPUT);
+                        decl String:target_name[MAX_NAME_LENGTH];
+                        decl target_list[1];
+                        decl target_count;
+                        decl bool:tn_is_ml;
+                        if ((target_count = ProcessTargetString(buffer,client,target_list,1,0,target_name,MAX_NAME_LENGTH,tn_is_ml)) <= 0)
+                        {
+                            ReplyToTargetError(client, target_count);
+                            return Plugin_Handled;
+                        }
+                        GetClientAbsOrigin(target_list[0],originC);
+                    }
+                }
+                case 'D': // set origin to another rewarD
+                {
+                    if (lastArg)
+                        err = true;
+                    else
+                    {
+                        GetCmdArg(++nextArg,buffer,MAXINPUT);
+                        new base = getRewardID(buffer,client);
+                        if (base < 0)
+                        {
+                            RespondToCommand(client, "[SM] Error: Unknown reward '%s'",buffer);
+                            return Plugin_Handled;
+                        }
+                        originC = defSpawnCoords[base];
+                    }
+                }
+                case 'f': // Force, overwrite existing files
+                {
+                    force = true;
+                }
+                default:
+                {
+                    RespondToCommand(client,"[SM] Ignoring unknown switch: %s",buffer);
+                }
+            }
+        }
+        else
+            break;
+        if (err)
+            break;
+    }
+    if ((err) || (nextArg > args))
+    {
+        RespondWriteUsage(client);
+        return Plugin_Handled;
+    }
+    GetCmdArg(nextArg, buffer, MAXINPUT);
+    while ((buffer[0] == '/') || (buffer[0] == '\\'))
+        StrErase(buffer,0);
+    if (StrFind(buffer,"..") > -1)
+    {
+        RespondToCommand(client,"[SM] Error: Illegal path.");
+        return Plugin_Handled;
+    }
+    if ((strcmp(buffer,"aliases.cfg") == 0) || (strcmp(buffer,"scripts.cfg") == 0))
+    {
+        RespondToCommand(client,"[SM] Error: Unable to overwrite system file.");
+        return Plugin_Handled;
+    }
+    Format(buffer,MAXINPUT,"cfg/maprewards/%s",buffer);
+    if (DirExists("cfg/maprewards") == false)
+        CreateDirectory("cfg/maprewards",511);
+    if (FileExists(buffer))
+    {
+        if (force)
+        {
+            RespondToCommand(client,"[SM] File exists . . . Overwriting . . .");
+            DeleteFile(buffer);
+        }
+        else
+        {
+            CRespondToCommand(client,"[SM] File exists . . . Use -f to overwrite.");
+            return Plugin_Handled;
+        }
+    }
+    
+    new Handle:oFile = OpenFile(buffer,"w");
+    new lines = 0;
+    for (new i = 0;i < MAXSPAWNPOINT;i++)
+    {
+        if ((rewards[i]) && (isValidReward(i)))
+        {
+            decl String:cmdC[MAXCMDLEN];
+            buildRewardCmd(i,cmdC,MAXCMDLEN,relative,originC);
+            WriteFileLine(oFile,cmdC);
+            lines++;
+        }
+    }
+    CloseHandle(oFile);
+    if (FileExists(buffer))
+        RespondToCommand(client,"[SM] Successfully wrote %d rewards to file '%s'.",lines,buffer);
+    else
+        RespondToCommand(client,"[SM] Some error has occurred. The file was not saved.");
+    return Plugin_Handled;
+}
+
+public Action:loadCFG(client, args)
+{
+    if (!handleClientAccess(client,g_basicFlag))
+        return Plugin_Handled;
+    if (args < 1)
+    {
+        RespondLoadUsage(client);
+        return Plugin_Handled;
+    }
+    decl String:buffer[MAXINPUT];
+    new Float:originC[3];
+    if ((client > 0) && (IsClientInGame(client)))
+        GetClientAbsOrigin(client,originC);
+    new bool:err = false;
+    new nextArg = 1;
+    new bool:lastArg = false;
+    new bool:rewards[MAXSPAWNPOINT] = { true, ... };
+    new bool:notRelative = false;
+    for (;nextArg <= args;nextArg++)
+    {
+        if (nextArg == args)
+            lastArg = true;
+        GetCmdArg(nextArg,buffer,MAXINPUT);
+        if (buffer[0] == '-')
+        {
+            if (buffer[1] == '-')
+            {
+                nextArg++;
+                break;
+            }
+            switch (buffer[1])
+            {
+                case 'E': // Except ID
+                {
+                    if (lastArg)
+                        err = true;
+                    else
+                    {
+                        GetCmdArg(++nextArg,buffer,MAXINPUT);
+                        decl range[2];
+                        if (!getRewardRange(buffer,range,0,false))
+                            for (new i = range[0];i <= range[1];i++)
+                                rewards[i] = false;
+                    }
+                }
+                case 'o': // Origin
+                {
+                    if (lastArg)
+                        err = true;
+                    else
+                    {
+                        GetCmdArg(nextArg+1,buffer,MAXINPUT);
+                        if (strcmp(buffer,"@aim") == 0)
+                        {
+                            nextArg++;
+                            if ((client > 0) && (IsClientInGame(client)))
+                                SetTeleportEndPoint(client,originC);
+                        }
+                        else if ((args-nextArg) < 3)
+                            err = true;
+                        else
+                        {
+                            for (new i = 0;i < 3;i++)
+                            {
+                                GetCmdArg(++nextArg,buffer,17);
+                                if (buffer[0] == '~')
+                                {
+                                    if (strlen(buffer) > 1)
+                                    {
+                                        StrErase(buffer,0,1);
+                                        originC[i] += StringToFloat(buffer);
+                                    }
+                                }
+                                else
+                                    originC[i] = StringToFloat(buffer);
+                            }
+                        }
+                    }
+                }
+                case 'O': // set origin to anOther player
+                {
+                    if (lastArg)
+                        err = true;
+                    else
+                    {
+                        GetCmdArg(++nextArg,buffer,MAXINPUT);
+                        decl String:target_name[MAX_NAME_LENGTH];
+                        decl target_list[1];
+                        decl target_count;
+                        decl bool:tn_is_ml;
+                        if ((target_count = ProcessTargetString(buffer,client,target_list,1,0,target_name,MAX_NAME_LENGTH,tn_is_ml)) <= 0)
+                        {
+                            ReplyToTargetError(client, target_count);
+                            return Plugin_Handled;
+                        }
+                        GetClientAbsOrigin(target_list[0],originC);
+                    }
+                }
+                case 'D': // set origin to another rewarD
+                {
+                    if (lastArg)
+                        err = true;
+                    else
+                    {
+                        GetCmdArg(++nextArg,buffer,MAXINPUT);
+                        new base = getRewardID(buffer,client);
+                        if (base < 0)
+                        {
+                            RespondToCommand(client, "[SM] Error: Unknown reward '%s'",buffer);
+                            return Plugin_Handled;
+                        }
+                        originC = defSpawnCoords[base];
+                    }
+                }
+                case 'N': // Not relative
+                {
+                    notRelative = true;
+                }
+                default:
+                {
+                    RespondToCommand(client,"[SM] Ignoring unknown switch: %s",buffer);
+                }
+            }
+        }
+        else
+            break;
+        if (err)
+            break;
+    }
+    if ((err) || (nextArg > args))
+    {
+        RespondLoadUsage(client);
+        return Plugin_Handled;
+    }
+    GetCmdArg(nextArg, buffer, MAXINPUT);
+    while ((buffer[0] == '/') || (buffer[0] == '\\'))
+        StrErase(buffer,0);
+    if (StrFind(buffer,"..") > -1)
+    {
+        RespondToCommand(client,"[SM] Error: Illegal path.");
+        return Plugin_Handled;
+    }
+    if ((strcmp(buffer,"aliases.cfg") == 0) || (strcmp(buffer,"scripts.cfg") == 0))
+    {
+        RespondToCommand(client,"[SM] Error: Unable to load system file.");
+        return Plugin_Handled;
+    }
+    Format(buffer,MAXINPUT,"cfg/maprewards/%s",buffer);
+    if (!FileExists(buffer))
+    {
+        CRespondToCommand(client,"[SM] Error: File %s does not exist.",buffer);
+        return Plugin_Handled;
+    }
+    cleanUp(CLEAN_MAN_LOAD);
+    new Handle:iFile = OpenFile(buffer,"r");
+    decl String:fBuf[MAXCMDLEN];
+    new lines, skipped;
+    decl String:rep[MAXINPUT];
+    if (!notRelative)
+        Format(rep,MAXINPUT,"sm_mrw_add -o %f %f %f ",originC[0],originC[1],originC[2]);
+    while (ReadFileLine(iFile,fBuf,MAXCMDLEN))
+    {
+        TrimString(fBuf);
+        if (strlen(fBuf) == 0)
+            continue;
+        if (StrFind(fBuf,"sm_mrw_add ") == 0)
+        {
+            if (rewards[lines++])
+            {
+                if (!notRelative)
+                    ReplaceStringEx(fBuf,MAXCMDLEN,"sm_mrw_add ",rep);
+                //PrintToServer("#%d... %s",lines-1,fBuf);
+                ServerCommand(fBuf);
+            }
+            else
+                skipped++;
+        }
+        else if (StrFind(fBuf,"sm_mrw_modify -1") == 0)
+        {
+            if (rewards[lines])
+                ServerCommand(fBuf);
+        }
+        else
+            ServerCommand(fBuf);
+    }
+    CloseHandle(iFile);
+    if (lines > 0)
+        CRespondToCommand(client,"[SM] Successfully spawned %d rewards.",lines-skipped);
+    else
+        CRespondToCommand(client,"[SM] Warning: No rewards found in file %s. CFG was executed.",buffer);
+    return Plugin_Handled;
+}
+
+public Action:killEntity(client, args)
+{
+    if (!handleClientAccess(client,g_basicFlag))
+        return Plugin_Handled;
+    if (args < 1)
+    {
+        RespondToCommand(client, "[SM] Usage: sm_mrw_kill <#entity_id>");
+        return Plugin_Handled;
+    }
+    decl String:buffer[16];
+    GetCmdArg(1,buffer,16);
+    new entID = StringToInt(buffer);
+    if (entID < 1)
+    {
+        RespondToCommand(client,"[SM] Error: Cannot kill entity '%d'.",entID);
+        return Plugin_Handled;
+    }
+    for (new i = 0; i < MAXSPAWNPOINT; i++)
+    {
+        if (spawnEnts[i] == entID)
+        {
+            RespondToCommand(client,"[SM] Error: Entity is still loaded as ID #%d. Use sm_mrw_remove or sm_mrw_release the entity first.",i);
+            return Plugin_Handled;
+        }
+    }
+    if (IsValidEntity(entID))
+        AcceptEntityInput(entID, "Kill");
+    else
+        RespondToCommand(client,"[SM] Error: Invalid entity.");
+    return Plugin_Handled;
 }
 
 public Action:addSpawnPoint(client, args)
 {
     if (!handleClientAccess(client,g_createFlag))
         return Plugin_Handled;
-    if (args < 2)
+    if (args < 1)
     {
-        RespondUsage(client);
+        CRespondToCommand(client, "[SM] Usage: sm_mrw_add [OPTIONS ...] [command ...]");
+        CRespondToCommand(client, "[SM]   Use sm_mrw_add -h to see the full help. Note: It's long, may want to run it from console.");
         return Plugin_Handled;
     }
     new spawnPoints = newEnt();
     if (spawnPoints >= MAXSPAWNPOINT)
     {
-        CRespondToCommand(client, "[SM] No more room for rewards! :( Use {green}sm_mrw_removeall{default} to reset.");
+        CRespondToCommand(client, "[SM] No more room for rewards! :( Use sm_mrw_removeall to reset.");
         return Plugin_Handled;
     }
     
@@ -2159,7 +2699,7 @@ public Action:addSpawnPoint(client, args)
                 case 'h': // Help
                 {
                     resetReward(spawnPoints);
-                    RespondUsage(client);
+                    RespondAddUsage(client);
                     return Plugin_Handled;
                 }
                 case 'l': // color overLay, r g b a
@@ -2222,9 +2762,9 @@ public Action:addSpawnPoint(client, args)
                     else
                     {
                         GetCmdArg(++nextArg,buffer,32);
-                        if ((StrIsDigit(buffer) > -1) || (StrFindFirstOf(buffer,ILLEGAL_NAME,0) > -1))
+                        if ((StrIsDigit(buffer) > -1) || (StrFind(buffer,"..") > -1) || (StrFindFirstOf(buffer,ILLEGAL_NAME,0) > -1))
                         {
-                            RespondToCommand(client, "[SM] Error: Reward names may not begin with a number or contain any of the following characters: '%s'.",ILLEGAL_NAME);
+                            CRespondToCommand(client, "[SM] Error: Reward names may not begin with a number, contain '..', or any of the following characters: '%s'.",ILLEGAL_NAME);
                             resetReward(spawnPoints);
                             return Plugin_Handled;
                         }
@@ -2399,7 +2939,7 @@ public Action:addSpawnPoint(client, args)
                 }
                 default:
                 {
-                    CRespondToCommand(client,"[SM] Ignoring unknown switch: {green}%s",buffer);
+                    CRespondToCommand(client,"[SM] Ignoring unknown switch: %s",buffer);
                 }
             }
         }
@@ -2422,8 +2962,8 @@ public Action:addSpawnPoint(client, args)
     if ((err) || ((strcmp(entType[spawnPoints],"prop_physics_override") == 0) && (strlen(model[spawnPoints]) < 1)))
     {
         resetReward(spawnPoints);
-        CRespondToCommand(client, "[SM] Usage: {green}sm_mrw_add{default} [{green}OPTIONS{default} ...] [{green}command{default} ...]");
-        CRespondToCommand(client, "[SM]   Use {green}sm_mrw_add -h{default} to see the full help. Note: It's long, may want to run it from console.");
+        CRespondToCommand(client, "[SM] Usage: sm_mrw_add [OPTIONS ...] [command ...]");
+        CRespondToCommand(client, "[SM]   Use sm_mrw_add -h to see the full help. Note: It's long, may want to run it from console.");
         return Plugin_Handled;
     }
     if (strlen(strCoords[0]) > 0)
@@ -2457,232 +2997,18 @@ public Action:addSpawnPoint(client, args)
         spawnReward(spawnPoints);
         if (release)
         {
-            CRespondToCommand(client, "[SM] Added reward and released entity #{green}%d",spawnEnts[spawnPoints]);
+            CRespondToCommand(client, "[SM] Added reward and released entity #%d",spawnEnts[spawnPoints]);
             resetReward(spawnPoints);
         }
         else
-            CRespondToCommand(client, "[SM] Added reward spawn point #{green}%d",spawnPoints);
+            CRespondToCommand(client, "[SM] Added reward spawn point #%d",spawnPoints);
     }
     else
-        CRespondToCommand(client, "[SM] Added reward spawn point #{green}%d",spawnPoints);
+        CRespondToCommand(client, "[SM] Added reward spawn point #%d",spawnPoints);
     newestReward = spawnPoints;
     if (client != 0)
         autoSave(SAVE_EDIT,true);
     return Plugin_Handled;
-}
-
-// Legacy command support. This command should never be used except when loading old saved configs.
-// This command will soon be removed in a future release, if you have old configs, you should load and resave them before this happens.
-public Action:addSpawnPointCustom(client, args)
-{
-    if (!handleClientAccess(client,g_createFlag))
-        return Plugin_Handled;
-    if (args < 8)
-    {
-        CRespondToCommand(client, "[SM] Usage: sm_mrw_add_custom <{green}entity_type{default}> <{green}X Y Z{default}> <{green}RX RY RZ{default}> <{green}model{default}> [{green}command{default}] [{green}script{default}] [{green}respawn_time{default}] [{green}respawn_method{default}] [{green}command2 ...{default}]");
-        CRespondToCommand(client, "[SM]    {green}entity_type{default} is the type of entity you wish to create.");
-        CRespondToCommand(client, "[SM]        This is prop_physics_override by default.");
-        CRespondToCommand(client, "[SM]        A value of {green}null{default}, {green}0{default}, or {green}foo{default} will use the default.");
-        CRespondToCommand(client, "[SM]    {green}X Y Z{default} are the coordinates for the entity.");
-        CRespondToCommand(client, "[SM]    {green}RX RY RZ{default} are the rotations for the entity.");
-        CRespondToCommand(client, "[SM]    {green}model{default} is the path to the model file you wish to use.");
-        CRespondToCommand(client, "[SM]        You may use model aliases defined with {green}sm_mrw_model_add{default}.");
-        CRespondToCommand(client, "[SM]    {green}command{default} is a command to run when a player touches the reward.");
-        CRespondToCommand(client, "[SM]        For no command, use either {green}null{default}, {green}0{default}, or {green}foo{default}.");
-        CRespondToCommand(client, "[SM]    {green}command2{default} is the parameter(s) following the player argument.");
-        CRespondToCommand(client, "[SM]        Use quotes for multiple args.");
-        CRespondToCommand(client, "[SM]        Example: {green}command{default} #player {green}command2{default}");
-        CRespondToCommand(client, "[SM]    {green}script{default} is a series of variables dispatched to the entity as an {green}overridescript{default}.");
-        CRespondToCommand(client, "[SM]        You may use script aliases defined with {green}sm_mrw_script_add{default}.");
-        CRespondToCommand(client, "[SM]        A value of {green}0{default} means no script.");
-        CRespondToCommand(client, "[SM]        A value of {green}null{default} is similar to {green}0{default}, except if a model alias is used that defined a script, that script is ignored.");
-        CRespondToCommand(client, "[SM]    {green}respawn_time{default} is the fractional seconds until the reward respawns.");
-        CRespondToCommand(client, "[SM]        A value of {green}0{default} will never respawn.");
-        CRespondToCommand(client, "[SM]        A value of {green}-1{default} will use the value of {green}sm_mrw_respawn_time{default}.");
-        CRespondToCommand(client, "[SM]    {green}respawn_method{default} must be one of the following:");
-        CRespondToCommand(client, "[SM]        {green}pickup{default}: This is the default behavior, when a player touches it, it will disappear until the respawn time is up.");
-        CRespondToCommand(client, "[SM]        {green}static{default}: The reward will stay, but will be inactive until the respawn time is up.");
-        return Plugin_Handled;
-    }
-    new spawnPoints = newEnt();
-    if (spawnPoints >= MAXSPAWNPOINT)
-    {
-        CRespondToCommand(client, "[SM] No more room for rewards! :( Use {green}sm_mrw_removeall{default} to reset.");
-        return Plugin_Handled;
-    }
-    IntToString(spawnPoints,entName[spawnPoints],32);
-    decl String:buffer[64];
-    GetCmdArg(1, buffer, sizeof(buffer));
-    if ((strcmp(buffer,"null") == 0) || (strcmp(buffer,"0") == 0) || (strcmp(buffer,"foo") == 0))
-        buffer = "prop_physics_override";
-    strcopy(entType[spawnPoints],32,buffer);
-    GetCmdArg(2, buffer, sizeof(buffer));
-    defSpawnCoords[spawnPoints][0] = StringToFloat(buffer);
-    GetCmdArg(3, buffer, sizeof(buffer));
-    defSpawnCoords[spawnPoints][1] = StringToFloat(buffer);
-    GetCmdArg(4, buffer, sizeof(buffer));
-    defSpawnCoords[spawnPoints][2] = StringToFloat(buffer);
-    GetCmdArg(5, buffer, sizeof(buffer));
-    defSpawnAngles[spawnPoints][0] = StringToFloat(buffer);
-    GetCmdArg(6, buffer, sizeof(buffer));
-    defSpawnAngles[spawnPoints][1] = StringToFloat(buffer);
-    GetCmdArg(7, buffer, sizeof(buffer));
-    defSpawnAngles[spawnPoints][2] = StringToFloat(buffer);
-    GetCmdArg(8, buffer, sizeof(buffer));
-    for (new i = 0;i < aliasCount;i++)
-    {
-        if (strcmp(buffer,aliases[i][0]) == 0)
-        {
-            strcopy(buffer,64,aliases[i][1]);
-            if (strcmp(aliases[i][2],"") != 0)
-                strcopy(script[spawnPoints][0],64,aliases[i][2]);
-            break;
-        }
-    }
-    model[spawnPoints] = buffer;
-    respawnTime[spawnPoints] = -1.0;
-    if (args > 8)
-    {
-        GetCmdArg(9, buffer, sizeof(buffer));
-        rCommand[spawnPoints][0] = buffer;
-        StrCat(rCommand[spawnPoints][0],128," #player ");
-        if (args > 9)
-        {
-            GetCmdArg(10, buffer, sizeof(buffer));
-            if (strcmp(buffer,"null") == 0)
-                script[spawnPoints][0] = "";
-            else if (strcmp(buffer,"0") != 0)
-            {
-                for (new i = 0;i < scriptCount;i++)
-                {
-                    if (strcmp(buffer,scripts[i][0]) == 0)
-                    {
-                        strcopy(buffer,64,scripts[i][1]);
-                        break;
-                    }
-                }
-                script[spawnPoints][0] = buffer;
-            }
-            if (args > 10)
-            {
-                GetCmdArg(11, buffer, sizeof(buffer));
-                respawnTime[spawnPoints] = StringToFloat(buffer);
-                if (args > 11)
-                {
-                    GetCmdArg(12, buffer, sizeof(buffer));
-                    if (strcmp(buffer,"pickup") == 0)
-                        respawnMethod[spawnPoints] = HOOK_TOUCH;
-                    else if (strcmp(buffer,"static") == 0)
-                        respawnMethod[spawnPoints] = HOOK_STATIC|HOOK_TOUCH;
-                    else if ((strcmp(buffer,"nohook") == 0) || (strcmp(buffer,"nopickup") == 0))
-                        respawnMethod[spawnPoints] = HOOK_NOHOOK;
-                    else if (strcmp(buffer,"constant") == 0)
-                        respawnMethod[spawnPoints] = HOOK_CONSTANT|HOOK_TOUCH;
-                    else
-                    {
-                        new n = StringToInt(buffer)
-                        switch (n)
-                        {
-                            case -1: respawnMethod[spawnPoints] = HOOK_NOHOOK;
-                            case 0: respawnMethod[spawnPoints] = HOOK_TOUCH;
-                            case 1: respawnMethod[spawnPoints] = HOOK_STATIC|HOOK_TOUCH;
-                            case 2: respawnMethod[spawnPoints] = HOOK_CONSTANT|HOOK_TOUCH;
-                            case 22: respawnMethod[spawnPoints] = HOOK_STATIC|HOOK_DEACTIVE|HOOK_TOUCH;
-                            default: respawnMethod[spawnPoints] = n;
-                        }
-                    }
-                    if (args > 12)
-                    {
-                        for (new i = 13; i <= args; i++)
-                        {
-                            GetCmdArg(i, buffer, sizeof(buffer));
-                            StrCat(rCommand[spawnPoints][0],128,buffer);
-                            StrCat(rCommand[spawnPoints][0],128," ");
-                        }
-                    }
-                }
-            }
-        }
-    }
-    else
-        respawnMethod[spawnPoints] = HOOK_NOHOOK;
-    if (g_enable)
-        spawnReward(spawnPoints);
-    if (client != 0)
-        autoSave(SAVE_EDIT,true);
-    CRespondToCommand(client, "[SM] Added reward spawn point #{green}%d",spawnPoints);
-    return Plugin_Handled;
-}
-
-RespondModifyUsage(client)
-{
-    CRespondToCommand(client, "[SM] Usage: {green}sm_mrw_modify{default} <{green}#reward_id|name{default}> [{green}OPTIONS{default} ...] [{green}command{default} ...]");
-    CRespondToCommand(client, "[SM]    {green}OPTIONS{default} is exactly the same as {green}sm_mrw_add{default} with the following exceptions:");
-    CRespondToCommand(client, "[SM]       {green}-o{default} - Origin coordinates default to the reward's if not specified.");
-    CRespondToCommand(client, "[SM]       {green}-r{default} - Rotation angles can now be relative.");
-    CRespondToCommand(client, "[SM]       {green}-h{default} - No help switch, because it breaks the flow of this command.");
-    CRespondToCommand(client, "[SM]    Use {green}sm_mrw_add -h{default} for a detailed paragraph about the {green}OPTIONS{default}.");
-    CRespondToCommand(client, "[SM]    If any combination of options that result in a conflict are used, an error explaining why that specific option could not be set will be displayed. Other options will still be applied.");
-    CRespondToCommand(client, "[SM]    If any multi-argument options are missing arguments, the command will stop where the error occured. This might cause undefined behaviour, and you will need to manually {green}sm_mrw_respawn{default} the reward.");
-}
-
-stock evaluateRewardAliases(const &any:r, bool:skip[4] = { false, ... })
-{
-    for (new i = 0;((i < scriptCount) && ((!skip[2]) || (!skip[3])));i++)
-    {
-        if ((!skip[2]) && (strcmp(script[r][0],scripts[i][0]) == 0))
-        {
-            strcopy(script[r][0],MAXINPUT,scripts[i][1]);
-            skip[2] = true;
-        }
-        if ((!skip[3]) && (strcmp(script[r][1],scripts[i][0]) == 0))
-        {
-            strcopy(script[r][1],MAXINPUT,scripts[i][1]);
-            skip[3] = true;
-        }
-    }
-    skip[0] = ((skip[0]) || (strcmp(model[r],"null") == 0) || (strcmp(model[r],"0") == 0));
-    skip[1] = ((skip[1]) || (strcmp(entType[r],"null") == 0) || (strcmp(entType[r],"0") == 0));
-    skip[2] = ((skip[2]) || (strlen(script[r][0])));
-    skip[3] = ((skip[3]) || (strlen(script[r][1])));
-    decl bool:isModel;
-    decl String:tempModel[MAXINPUT];
-    decl String:tempEntType[64];
-    new bool:writeTemp[2];
-    for (new i = 0;((i < aliasCount) && ((!skip[0]) || (!skip[1])));i++)
-    {
-        if (((isModel = ((!skip[0]) && (strcmp(model[r],aliases[i][0]) == 0)))) || ((!skip[1]) && (strcmp(entType[r],aliases[i][0]) == 0)))
-        {
-            if ((!skip[0]) && ((isModel) || (strlen(aliases[i][1]) > 0)))
-            {
-                strcopy(tempModel,MAXINPUT,aliases[i][1]);
-                writeTemp[0] = true;
-                if (isModel)
-                    skip[0] = true;
-            }
-            if ((!skip[1]) && ((!isModel) || (strlen(aliases[i][2]) > 0)))
-            {
-                strcopy(tempEntType,64,aliases[i][2]);
-                writeTemp[1] = true;
-                if (!isModel)
-                    skip[1] = true;
-            }
-            if ((!skip[2]) && (strlen(aliases[i][3]) > 0))
-            {
-                strcopy(script[r][0],MAXINPUT,aliases[i][3]);
-                skip[2] = true;
-            }
-            if ((!skip[3]) && (strlen(aliases[i][4]) > 0))
-            {
-                strcopy(script[r][1],MAXINPUT,aliases[i][4]);
-                skip[3] = true;
-            }
-        }
-    }
-    if (writeTemp[0])
-        strcopy(model[r],MAXINPUT,tempModel);
-    if (writeTemp[1])
-        strcopy(entType[r],64,tempEntType);
 }
 
 public Action:modifySpawnPoint(client, args)
@@ -2695,13 +3021,12 @@ public Action:modifySpawnPoint(client, args)
         return Plugin_Handled;
     }
     decl String:buffer[MAXINPUT];
-    decl String:rewards[MAXINPUT];
-    GetCmdArg(1,rewards,MAXINPUT);
+    GetCmdArg(1,buffer,MAXINPUT);
     new bool:list[MAXSPAWNPOINT];
     decl count;
-    if (!(count = getRewardList(rewards,list,client)))
+    if (!(count = getRewardList(buffer,list,client)))
     {
-        RespondToCommand(client, "[SM] Error: Found no rewards matching '%s'",rewards);
+        RespondToCommand(client, "[SM] Error: Found no rewards matching '%s'",buffer);
         return Plugin_Handled;
     }
     for (new r = 0;r < MAXSPAWNPOINT;r++)
@@ -2987,8 +3312,8 @@ public Action:modifySpawnPoint(client, args)
                     {
                         new spawnPoints = rewardID;
                         GetCmdArg(++nextArg,buffer,32);
-                        if ((StrIsDigit(buffer) > -1) || (StrFindFirstOf(buffer,ILLEGAL_NAME,0) > -1))
-                            RespondToCommand(client, "[SM] Error: Reward names may not begin with a number or contain any of the following characters: '%s'. Name not changed from '%s'.",ILLEGAL_NAME,entName[spawnPoints]);
+                        if ((StrIsDigit(buffer) > -1) || (StrFind(buffer,"..") > -1) || (StrFindFirstOf(buffer,ILLEGAL_NAME,0) > -1))
+                            CRespondToCommand(client, "[SM] Error: Reward names may not begin with a number, contain '..', or any of the following characters: '%s'. Name not changed from '%s'.",ILLEGAL_NAME,entName[spawnPoints]);
                         else
                         {
                             new dupe = getRewardID(buffer);
@@ -3001,7 +3326,7 @@ public Action:modifySpawnPoint(client, args)
                     else
                     {
                         nextArg++;
-                        CRespondToCommand(client,"Error: Skipping {green}-%c{default} switch. Unable to apply to multiple targets at once.",buffer[1]);
+                        CRespondToCommand(client,"Error: Skipping -%c switch. Unable to apply to multiple targets at once.",buffer[1]);
                     }
                 }
                 case 'o': // Origin coords
@@ -3246,7 +3571,7 @@ public Action:modifySpawnPoint(client, args)
                 }
                 default:
                 {
-                    CRespondToCommand(client,"[SM] Ignoring unknown switch: {green}%s",buffer);
+                    CRespondToCommand(client,"[SM] Ignoring unknown switch: %s",buffer);
                 }
             }
         }
@@ -3259,13 +3584,13 @@ public Action:modifySpawnPoint(client, args)
     {
         if (single)
         {
-            CRespondToCommand(client, "[SM] Error modifying reward #{green}%d{default}. Some data may have been changed, some was not. This likely resulted in undefined behaviour.",rewardID);
-            CRespondToCommand(client, "[SM]  You will need to manually run {green}sm_mrw_respawn %d{default} before the reward will be active again.",rewardID);
+            CRespondToCommand(client, "[SM] Error modifying reward #%d. Some data may have been changed, some was not. This likely resulted in undefined behaviour.",rewardID);
+            CRespondToCommand(client, "[SM]  You will need to manually run sm_mrw_respawn %d before the reward will be active again.",rewardID);
         }
         else
         {
             CRespondToCommand(client, "[SM] Error modifying rewards. Some data may have been changed, some was not. This likely resulted in undefined behaviour.");
-            CRespondToCommand(client, "[SM]  You will need to manually {green}sm_mrw_respawn{default} the rewards before they will be active again.");
+            CRespondToCommand(client, "[SM]  You will need to manually sm_mrw_respawn the rewards before they will be active again.");
         }
         return Plugin_Handled;
     }
@@ -3349,6 +3674,8 @@ public Action:modifySpawnPoint(client, args)
             }
             if (updateCommand)
                 strcopy(rCommand[r][whichCommand],MAXCMDLEN,comm);
+            else if (whichCommand)
+                strcopy(rCommand[r][1],MAXCMDLEN,"");
             if ((updateModel) || (updateEntType))
             {
                 if (unEvaluate[r])
@@ -3473,164 +3800,17 @@ public Action:modifySpawnPoint(client, args)
                 spawnReward(r);
                 if (release)
                 {
-                    CRespondToCommand(client, "[SM] Modified reward and released entity #{green}%d",spawnEnts[r]);
+                    CRespondToCommand(client, "[SM] Modified reward and released entity #%d",spawnEnts[r]);
                     resetReward(r);
                 }
                 else
-                    CRespondToCommand(client, "[SM] Modified reward spawn point #{green}%d",r);
+                    CRespondToCommand(client, "[SM] Modified reward spawn point #%d",r);
             }
         }
     }
     if (client != 0)
         autoSave(SAVE_EDIT,true);
     return Plugin_Handled;
-}
-
-stock getRewardID(const String:name[], any:client = 0, any:ignore = -1, bool:resolve = true)
-{
-    new id = -1;
-    if ((resolve) && (client > 0) && ((strcmp(name,"@n") == 0) || (strcmp(name,"@aim") == 0)))
-    {
-        new Float:distance[2];
-        new Float:dCoords[2][3];
-        if (strlen(name) == 2)
-            GetClientAbsOrigin(client,dCoords[0]);
-        else
-            SetTeleportEndPoint(client,dCoords[0]);
-        new bool:initialized;
-        for (new i = 0;i < MAXSPAWNPOINT;i++)
-        {
-            if ((ignore == i) || (strlen(entType[i]) < 1))
-                continue;
-            if (spawnEnts[i] > -1)
-                GetEntPropVector(spawnEnts[i],Prop_Data,"m_vecOrigin",dCoords[1]);
-            else
-                dCoords[1] = defSpawnCoords[i];
-            distance[0] = GetVectorDistance(dCoords[0],dCoords[1]);
-            if ((!initialized) || (distance[0] < distance[1]))
-            {
-                initialized = true;
-                distance[1] = distance[0];
-                id = i;
-            }
-        }
-    }
-    else if ((resolve) && (strcmp(name,"-1") == 0))
-        id = getNewestReward();
-    else if (StrIsDigit(name) > -1)
-        id = StringToInt(name);
-    else if (resolve)
-    {
-        for (new i = 0;i < MAXSPAWNPOINT;i++)
-        {
-            if (strcmp(entName[i],name) == 0)
-            {
-                id = i;
-                break;
-            }
-        }
-    }
-    return id;
-}
-
-stock getRewardRange(const String:rewards[], any:range[2], any:client = 0, bool:resolve = true)
-{
-    range = { -1, -1 };
-    new blen;
-    new dots;
-    decl String:temp[32];
-    blen = strlen(rewards);
-    switch ((dots = StrFind(rewards,"..")))
-    {
-        case -1:
-        {
-            range[0] = range[1] = getRewardID(rewards,client,resolve);
-        }
-        case 0:
-        {
-            if (blen > 2)
-            {
-                range[0] = 0;
-                strcopy(temp,32,rewards);
-                StrErase(temp,0,2);
-                if (StrIsDigit(temp) > -1)
-                {
-                    range[0] = 0;
-                    range[1] = StringToInt(temp);
-                }
-                else
-                    range[0] = range[1] = getRewardID(rewards,client,resolve);
-            }
-        }
-        default:
-        {
-            if (StrIsDigit(rewards) > -1)
-            {
-                range[0] = StringToInt(rewards);
-                if ((dots += 2) < blen)
-                {
-                    strcopy(temp,32,rewards);
-                    StrErase(temp,0,dots);
-                    if (StrIsDigit(temp) > -1)
-                        range[1] = StringToInt(temp);
-                    else
-                        range[0] = range[1] = getRewardID(rewards,client,resolve);
-                }
-                else
-                    range[1] = MAXSPAWNPOINT-1;
-            }
-        }
-    }
-    if (range[0] > -1)
-    {
-        if (range[1] >= MAXSPAWNPOINT)
-            range[1] = MAXSPAWNPOINT-1;
-        return 0;
-    }
-    return 1;
-}
-
-stock getRewardList(const String:rewards[], bool:list[MAXSPAWNPOINT], any:client = 0)
-{
-    decl String:str[MAXINPUT];
-    strcopy(str,MAXINPUT,rewards);
-    decl String:current[32];
-    decl range[2];
-    decl bool:negate;
-    decl len;
-    StrCat(str,MAXINPUT,",");
-    while (SplitString(str,",",current,32) > -1)
-    {
-        if (current[0] == '!')
-        {
-            negate = true;
-            StrErase(current,0,1);
-        }
-        else
-            negate = false;
-        if (!getRewardRange(current,range,client))
-        {
-            for (new i = range[0];i <= range[1];i++)
-            {
-                if (isValidReward(i))
-                {
-                    if (negate)
-                        list[i] = false;
-                    else
-                        list[i] = true;
-                }
-            }
-        }
-        len = strlen(current);
-        if (strlen(str) > len)
-            len++;
-        StrErase(str,0,len);
-    }
-    new ret = 0;
-    for (new i = 0;i < MAXSPAWNPOINT;i++)
-        if (list[i])
-            ret++;
-    return ret;
 }
 
 public Action:removeSpawnPoint(client, args)
@@ -3710,54 +3890,6 @@ public Action:manuallyRespawnReward(client, args)
     return Plugin_Handled;
 }
 
-triggerReward(index, client, inflictor = -1)
-{
-    decl String:cmdD[MAXCMDLEN];
-    strcopy(cmdD,MAXCMDLEN,rCommand[index][0]);
-    if ((inflictor > -1) && (strlen(rCommand[index][1]) > 0))
-        strcopy(cmdD,MAXCMDLEN,rCommand[index][1]);
-    if ((strlen(cmdD) > 0) && (strcmp(cmdD,"null") != 0))
-    {
-        decl String:cmdC[MAXCMDLEN];
-        decl String:target[8];
-        Format(target,8,"#%i",GetClientUserId(client));
-        strcopy(cmdC,MAXCMDLEN,cmdD);
-        ReplaceString(cmdC,MAXCMDLEN,"#player",target);
-        ReplaceString(cmdC,MAXCMDLEN,"#reward",entName[index]);
-        if (inflictor > -1)
-        {
-            decl String:flict[8];
-            IntToString(inflictor,flict,8);
-            ReplaceString(cmdC,MAXCMDLEN,"#inflictor",flict);
-        }
-        ServerCommand(cmdC);
-    }
-}
-
-stock bool:handleClientAccess(client, any:flags)
-{
-    if (client > 0)
-    {
-        new flagBits = GetUserFlagBits(client);
-        if (((flagBits & ADMFLAG_ROOT) == 0) && ((flagBits & flags) != flags))
-        {
-            ReplyToCommand(client,"[SM] You do not have access to this command.");
-            return false;
-        }
-    }
-    return true;
-}
-
-RespondTriggerUsage(client)
-{
-    CRespondToCommand(client,"[SM] Usage: {green}sm_mrw_trigger{default} <{green}#reward_id|name{default}> [{green}OPTIONS ...{default}] [{green}#userid|name{default}]");
-    CRespondToCommand(client,"[SM]    {green}OPTIONS{default}:");
-    CRespondToCommand(client,"[SM]       {green}-R{default}   Do not kill and respawn the reward.");
-    CRespondToCommand(client,"[SM]       {green}-t{default} <{green}respawn_time{default}>");
-    CRespondToCommand(client,"[SM]          Temporarily override the reward's {green}respawn_time{default} setting.");
-    CRespondToCommand(client,"[SM]       {green}-X{default}   Treat the trigger as a hurt or kill event.");
-}
-
 public Action:mapRewardTrigger(client, args)
 {
     if (handleClientAccess(client,g_basicFlag))
@@ -3818,7 +3950,7 @@ public Action:mapRewardTrigger(client, args)
                             }
                             default:
                             {
-                                CRespondToCommand(client,"[SM] Ignoring unknown switch: {green}%s",buffer);
+                                CRespondToCommand(client,"[SM] Ignoring unknown switch: %s",buffer);
                             }
                         }
                     }
@@ -3831,7 +3963,8 @@ public Action:mapRewardTrigger(client, args)
                             ReplyToTargetError(client,0);
                             return Plugin_Handled;
                         }
-                        inflictor = target_list[0];
+                        if (inflictor > -1)
+                            inflictor = target_list[0];
                         break;
                     }
                     if (err)
@@ -3864,7 +3997,7 @@ public Action:mapRewardTrigger(client, args)
                                     CreateTimer(rTime,timerRespawnReward,r);
                             }
                         }
-                        CRespondToCommand(client,"[SM] Triggered reward #{green}%d",r);
+                        CRespondToCommand(client,"[SM] Triggered reward #%d",r);
                     }
                 }
             }
@@ -3965,265 +4098,6 @@ public Action:rewardTakeDamagePost(Handle:Timer, any:index)
 
 //proper format:    overridescript?key,type=value&key,type=value&...&input&input&...
 
-// Thanks to GottZ for this: https://sm.alliedmods.net/api/index.php?fastload=show&id=398&
-stock GetRealClientCount(bool:inGameOnly = true)
-{
-    new clients = 0;
-    for (new i = 1; i <= GetMaxClients(); i++)
-    {
-        if (((inGameOnly) ? IsClientInGame(i) : IsClientConnected(i)) && !IsFakeClient(i))
-        {
-            clients++;
-        }
-    }
-    return clients;
-}
-
-spawnReward(index)
-{
-    if ((strlen(entType[index]) == 0) || (GetRealClientCount() < 1))
-        return;
-    
-    entDamage[index] = 0.0;
-    
-    if (respawnMethod[index] & HOOK_DEACTIVE)
-    {
-        //respawnMethod[index] &= ~HOOK_DEACTIVE;
-        if (IsValidEntity(spawnEnts[index]))
-        {
-            decl String:temp[32];
-            GetEntPropString(spawnEnts[index], Prop_Data, "m_iName", temp, 32);
-            if (strcmp(entName[index],temp) == 0)
-            {
-                respawnMethod[index] &= ~HOOK_DEACTIVE;
-                if (respawnMethod[index] & HOOK_TOUCH)
-                    SDKHook(spawnEnts[index], SDKHook_StartTouch, mapRewardPickUp);
-                if (respawnMethod[index] & HOOK_HURT)
-                    SDKHook(spawnEnts[index], SDKHook_OnTakeDamage, mapRewardTakeDamage);
-                return;
-            } // Don't return here incase the reward does not match so it can be made from scratch
-        }
-        else if (!(respawnMethod[index] & HOOK_STATIC))
-        {
-            if (respawnTime[index] < 0.0)
-                CreateTimer(g_respawnTime, timerRespawnReward, index);
-            else if (respawnTime[index] > 0.0)
-                CreateTimer(respawnTime[index], timerRespawnReward, index);
-            return;
-        }
-    }
-    
-    killReward(index);
-    
-    decl String:tempModel[MAXINPUT];
-    decl String:tempEntType[64];
-    decl String:tempScript[2][MAXINPUT];
-    strcopy(tempModel,MAXINPUT,model[index]);
-    strcopy(tempEntType,64,entType[index]);
-    strcopy(tempScript[0],MAXINPUT,script[index][0]);
-    strcopy(tempScript[1],MAXINPUT,script[index][1]);
-    if (unEvaluate[index])
-    {
-        evaluateRewardAliases(index);
-        StrSwap(tempModel,model[index]);
-        StrSwap(tempEntType,entType[index]);
-        StrSwap(tempScript[0],script[index][0]);
-        StrSwap(tempScript[1],script[index][1]);
-        /*for (new i = 0;i < aliasCount;i++)
-        {
-            if ((strcmp(tempEntType,aliases[i][0]) == 0) || (strcmp(tempModel,aliases[i][0]) == 0))
-            {
-                if ((strlen(aliases[i][1]) > 0) && (strcmp(tempModel,"null") != 0) && (strcmp(tempModel,"0") != 0))
-                    strcopy(tempModel,MAXINPUT,aliases[i][1]);
-                if ((strlen(aliases[i][2]) > 0) && (strcmp(tempEntType,"null") != 0) && (strcmp(tempEntType,"0") != 0))
-                    strcopy(tempEntType,64,aliases[i][2]);
-                if ((strlen(aliases[i][3]) > 0) && (strcmp(tempScript[0],"null") != 0) && (strcmp(tempScript[0],"0") != 0))
-                    strcopy(tempScript[0],MAXINPUT,aliases[i][3]);
-                if ((strlen(aliases[i][4]) > 0) && (strcmp(tempScript[1],"null") != 0) && (strcmp(tempScript[1],"0") != 0))
-                    strcopy(tempScript[1],MAXINPUT,aliases[i][4]);
-                break;
-            }
-        }
-        for (new i = 0;i < scriptCount;i++)
-        {
-            if (strcmp(tempScript[0],scripts[i][0]) == 0)
-                strcopy(tempScript[0],MAXINPUT,scripts[i][1]);
-            if (strcmp(tempScript[1],scripts[i][0]) == 0)
-                strcopy(tempScript[1],MAXINPUT,scripts[i][1]);
-        }*/
-    }
-    if (strcmp(tempModel,"null") == 0)
-        strcopy(tempModel,MAXINPUT,"");
-    if (strcmp(tempEntType,"null") == 0)
-        strcopy(tempEntType,64,"");
-    if (strcmp(tempScript[0],"null") == 0)
-        strcopy(tempScript[0],MAXINPUT,"");
-    if (strcmp(tempScript[1],"null") == 0)
-        strcopy(tempScript[1],MAXINPUT,"");
-    if (strlen(tempEntType) < 1)
-        strcopy(tempEntType,64,"prop_physics_override");
-    
-    new entReward = CreateEntityByName(tempEntType);
-    
-    if (IsValidEntity(entReward))
-    {
-        SetEntPropString(entReward, Prop_Data, "m_iName", entName[index]);
-        if (strlen(tempModel) > 0)
-            DispatchKeyValue(entReward, "model", tempModel);
-        new spawned = 0;
-        if (strlen(tempScript[0]) > 0)
-        {
-            if (StrContains(tempScript[0],"?") != -1)
-            {
-                new String:strMain[2][MAXINPUT];
-                new String:strCurrent[MAXINPUT];
-                new String:strKeys[2][MAXINPUT];
-                new String:strType[16];
-                new String:strTemp[MAXINPUT];
-                ExplodeString(tempScript[0],"?",strMain,2,MAXINPUT,true);
-                Format(strMain[1],MAXINPUT,"%s&",strMain[1]);
-                if (strcmp(strMain[0],"null") != 0)
-                    DispatchKeyValue(entReward, "overridescript", strMain[0]);
-                //PrintToServer("[SM] Debug0: %s | %s",strMain[0],strMain[1]);
-                while (SplitString(strMain[1],"&",strCurrent,MAXINPUT) > -1)
-                {
-                    //PrintToServer("[SM] Debug1: %s",strCurrent);
-                    if (StrContains(strCurrent,",") == -1)
-                    {
-                        if (!spawned)
-                        {
-                            DispatchSpawn(entReward);
-                            spawned = 1;
-                        }
-                        AcceptEntityInput(entReward,strCurrent);
-                    }
-                    else
-                    {
-                        ExplodeString(strCurrent,",",strKeys,2,MAXINPUT,true);
-                        //PrintToServer("[SM] Debug2: %s | %s",strKeys[0],strKeys[1]);
-                        SplitString(strKeys[1],"=",strType,16);
-                        Format(strType,16,"%s=",strType);
-                        ReplaceStringEx(strKeys[1],MAXINPUT,strType,"",-1,0);
-                        //PrintToServer("[SM] Debug3: %s | %s",strType,strKeys[1]);
-                        if ((strcmp(strType,"float=") == 0) || (strcmp(strType,"int=") == 0))
-                            DispatchKeyValueFloat(entReward,strKeys[0],StringToFloat(strKeys[1]));
-                        else if (strcmp(strType,"string=") == 0)
-                            DispatchKeyValue(entReward,strKeys[0],strKeys[1]);
-                        else
-                            DispatchKeyValue(entReward,strKeys[0],strKeys[1]);
-                    }
-                    Format(strTemp,MAXINPUT,"%s&",strCurrent);
-                    ReplaceStringEx(strMain[1],MAXINPUT,strTemp,"",-1,0);
-                    ReplaceStringEx(strMain[1],MAXINPUT,strCurrent,"",-1,0);
-                    //PrintToServer("[SM] Debug4: %s",strMain[1]);
-                }
-            }
-            else
-                DispatchKeyValue(entReward, "overridescript", tempScript[0]);
-        }
-        if (strlen(tempScript[1]) > 0)
-        {
-            //[prop_type:]key,[type=]value&[prop_type:]key,[type=]value
-            decl String:strMain[MAXINPUT];
-            decl String:strCurrent[MAXINPUT];
-            decl String:strKeys[2][MAXINPUT];
-            decl String:strType[16];
-            decl String:strTemp[MAXINPUT];
-            strcopy(strMain,MAXINPUT,tempScript[1]);
-            StrCat(strMain,MAXINPUT,"&");
-            new PropType:propType;
-            while (SplitString(strMain,"&",strCurrent,MAXINPUT) > -1)
-            {
-                if (StrContains(strCurrent,",") > -1)
-                {
-                    propType = Prop_Data;
-                    if ((strlen(strCurrent) > 2) && (strCurrent[1] == ':'))
-                    {
-                        if (strCurrent[0] == '1')
-                            propType = Prop_Send;
-                        StrErase(strCurrent,0,2);
-                    }
-                    if (!spawned)
-                    {
-                        DispatchSpawn(entReward);
-                        spawned = 1;
-                    }
-                    ExplodeString(strCurrent,",",strKeys,2,MAXINPUT,true);
-                    SplitString(strKeys[1],"=",strType,16);
-                    StrCat(strType,16,"=");
-                    ReplaceStringEx(strKeys[1],MAXINPUT,strType,"",-1,0);
-                    if (strcmp(strType,"float=") == 0)
-                        SetEntPropFloat(entReward, propType, strKeys[0], StringToFloat(strKeys[1]));
-                    else if (strcmp(strType,"int=") == 0)
-                        SetEntProp(entReward, propType, strKeys[0], StringToInt(strKeys[1]));
-                    else if (strcmp(strType,"bool=") == 0)
-                        SetEntProp(entReward, propType, strKeys[0], StringToInt(strKeys[1]), 1);
-                    else if (strcmp(strType,"vec=") == 0)
-                    {
-                        new Float:vec[3];
-                        decl String:strVec[3][16];
-                        ExplodeString(strKeys[1],",",strVec,3,16,true);
-                        for (new i = 0;i < 3;i++)
-                            vec[i] = StringToFloat(strVec[i]);
-                        SetEntPropVector(entReward, propType, strKeys[0], vec);
-                    }
-                    else if (strcmp(strType,"ent=") == 0)
-                        SetEntPropEnt(entReward, propType, strKeys[0], StringToInt(strKeys[1]));
-                    else
-                        SetEntPropString(entReward, propType, strKeys[0], strKeys[1]);
-                }
-                strcopy(strTemp,MAXINPUT,strCurrent);
-                StrCat(strTemp,MAXINPUT,"&");
-                ReplaceStringEx(strMain,MAXINPUT,strTemp,"",-1,0);
-                ReplaceStringEx(strMain,MAXINPUT,strCurrent,"",-1,0);
-            }
-        }
-        if (!spawned)
-            DispatchSpawn(entReward);
-        if (entOverlay[index] != FULLSPECTRUM)
-        {
-            decl colors[4];
-            colors[0] = (entOverlay[index] & 0x000000FF);
-            colors[1] = (entOverlay[index] & 0x0000FF00) >> 8;
-            colors[2] = (entOverlay[index] & 0x00FF0000) >> 16;
-            colors[3] = (entOverlay[index] & 0xFF000000) >> 24;
-            for (new i = 0;i < 4;i++)
-                if (colors[i] < 0)
-                    colors[i] = (colors[i] % 256) + 256;
-            SetEntityRenderMode(entReward,RENDER_GLOW);
-            SetEntityRenderColor(entReward,colors[0],colors[1],colors[2],colors[3]);
-            //SetEntityRenderFx(entReward,RENDERFX_GLOWSHELL); // maybe we can play with this later
-            //PrintToChatAll("[debug] %d = %d,%d,%d,%d",entOverlay[index],colors[0],colors[1],colors[2],colors[3]);
-        }
-        TeleportEntity(entReward, defSpawnCoords[index], defSpawnAngles[index], NULL_VECTOR);
-        if (respawnMethod[index] & HOOK_DEACTIVE)
-        {
-            if (respawnTime[index] < 0.0)
-                CreateTimer(g_respawnTime, timerRespawnReward, index);
-            else if (respawnTime[index] > 0.0)
-                CreateTimer(respawnTime[index], timerRespawnReward, index);
-        }
-        else
-        {
-            if (respawnMethod[index] & HOOK_TOUCH)
-                SDKHook(entReward, SDKHook_StartTouch, mapRewardPickUp);
-            if (respawnMethod[index] & HOOK_HURT)
-                SDKHook(entReward, SDKHook_OnTakeDamage, mapRewardTakeDamage);
-        }
-        if (entSpinInt[index] > 0.0)
-        {
-            entSpinAngles[index] = defSpawnAngles[index];
-            entTimers[index] = CreateTimer(entSpinInt[index], timerSpinEnt, index, TIMER_REPEAT);
-        }
-        spawnEnts[index] = entReward;
-    }
-    else
-    {
-        PrintToChatAll("[SM] maprewards: Error, unable to spawn reward #%i",index);
-        PrintToServer("[SM] maprewards: Error, unable to spawn reward #%i",index);
-    }
-}
-
 /*
 sm_maprewards_add_here gift null null?DisableMotion&modelscale,float:2.0
 [SM] Debug0: null | DisableMotion&modelscale,float&
@@ -4285,47 +4159,5 @@ public Action:timerSpinEnt(Handle:Timer, any:index)
         return Plugin_Continue;
     }
     return Plugin_Stop;
-}
-
-// Borrowed from pumpkin.sp by linux_lover aka pheadxdll: https://forums.alliedmods.net/showthread.php?p=976177
-// From pheadxdll: "Credits to Spaz & Arg for the positioning code. Taken from FuncommandsX."
-// Slightly modified to remove globals.
-stock bool:SetTeleportEndPoint(client, Float:pos[3])
-{
-	decl Float:vAngles[3];
-	decl Float:vOrigin[3];
-	decl Float:vBuffer[3];
-	decl Float:vStart[3];
-	decl Float:Distance;
-	
-	GetClientEyePosition(client,vOrigin);
-	GetClientEyeAngles(client, vAngles);
-	
-    //get endpoint for teleport
-	new Handle:trace = TR_TraceRayFilterEx(vOrigin, vAngles, MASK_SHOT, RayType_Infinite, TraceEntityFilterPlayer);
-
-	if(TR_DidHit(trace))
-	{   	 
-   	 	TR_GetEndPosition(vStart, trace);
-		GetVectorDistance(vOrigin, vStart, false);
-		Distance = -35.0;
-   	 	GetAngleVectors(vAngles, vBuffer, NULL_VECTOR, NULL_VECTOR);
-		pos[0] = vStart[0] + (vBuffer[0]*Distance);
-		pos[1] = vStart[1] + (vBuffer[1]*Distance);
-		pos[2] = vStart[2] + (vBuffer[2]*Distance);
-	}
-	else
-	{
-		CloseHandle(trace);
-		return false;
-	}
-	
-	CloseHandle(trace);
-	return true;
-}
-
-public bool:TraceEntityFilterPlayer(entity, contentsMask)
-{
-	return entity > GetMaxClients() || !entity;
 }
 
