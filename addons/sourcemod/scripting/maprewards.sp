@@ -3,13 +3,14 @@
 #include <string>
 #include <sdkhooks>
 
-#define VERSION "1.000"
+#define VERSION "1.001"
 
 #define MAXSPAWNPOINT       512
 #define MAXALIASES          128
 #define MAXSCRIPTS          64
 #define MAXINPUT            128
 #define MAXCMDLEN           1024
+#define MAXCMDBUF           6656 // Playing it safe and keeping this lower. In testing, I was able to get at least 7611 before overflowing.
 
 #define CLEAN_PLUG_END      1
 #define CLEAN_MAP_START     2
@@ -48,74 +49,12 @@
 \*                             */
 /*          CHANGELOG          *\
 \*                             */
-/*      v0.224_Pre-Stable      *\
+/*           v1.001            *\
 \*                             */
-/* Reward names can no longer  *\
-\*     contain '@' or '..'     */
-/*                             *\
-\*  sm_teleplus now accepts a  */
-/*  target as the second arg.  *\
-\*                             */
-/* Removed the following cmds: *\
-\*      sm_mrw_add_custom      */
-/*        sm_mrw_copy          *\
-\*       sm_mrw_copyhere       */
-/*        sm_mrw_move          *\
-\*        sm_mrw_turn          */
-/*       sm_mrw_release        *\
-\*  All functionality exists   */
-/*    within sm_mrw_modify.    *\
-\*                             */
-/*  Better code organization.  *\
-\*                             */
-/*      v0.234_Pre-Stable      *\
-\*                             */
-/*     Removed strplus.inc     *\
-\*     Removed colors.inc      */
-/*                             *\
-\*      v0.235_Pre-Stable      */
-/*                             *\
-\* Fixed sm_teleplus bug that  */
-/*  incorrectly processed XYZ  *\
-\* as a target client string.  */
-/*                             *\
-\*      v0.236_Pre-Stable      */
-/*                             *\
-\*  Fixed sm_mrw_trigger bug   */
-/*  automatically setting the  *\
-\* -X switch when a target is  */
-/*          provided.          *\
-\*                             */
-/*      v0.237_Pre-Stable      *\
-\*                             */
-/*  Optimized colors in chat.  *\
-\*                             */
-/*      v0.238_Pre-Stable      *\
-\*                             */
-/* Hopefully fixed sm_mrw_add  *\
-\* help message being cut off. */
-/*                             *\
-\*      v0.239_Pre-Stable      */
-/*                             *\
-\* Removed some useless error  */
-/*           output.           *\
-\*                             */
-/*   sm_mrw_info is now more   *\
-\* comprehensive and colorful. */
-/*                             *\
-\*      v0.240_Pre-Stable      */
-/*                             *\
-\*  Decreased precision of -T  */
-/*    settings when saving.    *\
-\*                             */
-/*           v1.000            *\
-\*                             */
-/*    First stable release!    *\
-\*                             */
-/*    Now the -X switch in     *\
-\*  sm_mrw_modify will unset   */
-/* the hurt command if none is *\
-\*          provided.          */
+/*       Fixed bug with        *\
+\* sm_mrw_cfg_load causing the */
+/*  server command buffer to   *\
+\*          overflow.          */
 /*                             *\
 \* * * * * * * * * * * * * * * */
 
@@ -2421,15 +2360,18 @@ public Action:loadCFG(client, args)
     cleanUp(CLEAN_MAN_LOAD);
     new Handle:iFile = OpenFile(buffer,"r");
     decl String:fBuf[MAXCMDLEN];
-    new lines, skipped;
+    new lines, skipped, entries, cBufSize = 50;
     decl String:rep[MAXINPUT];
     if (!notRelative)
         Format(rep,MAXINPUT,"sm_mrw_add -o %f %f %f ",originC[0],originC[1],originC[2]);
+    new Handle:cBuf = CreateArray(MAXCMDLEN,cBufSize);
     while (ReadFileLine(iFile,fBuf,MAXCMDLEN))
     {
         TrimString(fBuf);
         if (strlen(fBuf) == 0)
             continue;
+        if (entries >= cBufSize)
+            ResizeArray(cBuf,(cBufSize = 50*(entries/50+1)));
         if (StrFind(fBuf,"sm_mrw_add ") == 0)
         {
             if (rewards[lines++])
@@ -2437,7 +2379,8 @@ public Action:loadCFG(client, args)
                 if (!notRelative)
                     ReplaceStringEx(fBuf,MAXCMDLEN,"sm_mrw_add ",rep);
                 //PrintToServer("#%d... %s",lines-1,fBuf);
-                ServerCommand(fBuf);
+                //ServerCommand(fBuf);
+                entries = PushArrayString(cBuf,fBuf)+1;
             }
             else
                 skipped++;
@@ -2445,12 +2388,37 @@ public Action:loadCFG(client, args)
         else if (StrFind(fBuf,"sm_mrw_modify -1") == 0)
         {
             if (rewards[lines])
-                ServerCommand(fBuf);
+                //ServerCommand(fBuf);
+                entries = PushArrayString(cBuf,fBuf)+1;
         }
         else
-            ServerCommand(fBuf);
+            //ServerCommand(fBuf);
+            entries = PushArrayString(cBuf,fBuf)+1;
     }
     CloseHandle(iFile);
+    if (entries > 0)
+    {
+        new i = 0;
+        for (new bSize = 1;i < entries;i++)
+        {
+            GetArrayString(cBuf,i,fBuf,MAXCMDLEN);
+            bSize += strlen(fBuf)+2;
+            if (bSize < MAXCMDBUF)
+                ServerCommand(fBuf);
+            else
+            {
+                Format(fBuf,MAXCMDLEN,"%d,%d",i,entries);
+                SetArrayString(cBuf,0,fBuf);
+                CreateTimer(0.0,sendCommandBuffer,cBuf,TIMER_REPEAT);
+                break;
+            }
+        }
+        if (i >= entries)
+        {
+            ResizeArray(cBuf,0);
+            CloseHandle(cBuf);
+        }
+    }
     if (lines > 0)
         CRespondToCommand(client,"[SM] Successfully spawned %d rewards.",lines-skipped);
     else
@@ -4157,6 +4125,42 @@ public Action:timerSpinEnt(Handle:Timer, any:index)
         }
         TeleportEntity(spawnEnts[index],NULL_VECTOR,entSpinAngles[index],NULL_VECTOR);
         return Plugin_Continue;
+    }
+    return Plugin_Stop;
+}
+
+public Action:sendCommandBuffer(Handle:Timer, Handle:buffer)
+{
+    decl String:buf[MAXCMDLEN];
+    new i = 0, bSize = 1;
+    decl size;
+    GetArrayString(buffer,0,buf,MAXCMDLEN);
+    if (StrIsDigit(buf) > -1)
+    {
+        decl String:indexes[2][16];
+        ExplodeString(buf,",",indexes,2,16);
+        i = StringToInt(indexes[0]);
+        size = StringToInt(indexes[1]);
+    }
+    else
+        size = GetArraySize(buffer);
+    for (;i < size;i++)
+    {
+        GetArrayString(buffer,i,buf,MAXCMDLEN);
+        bSize += strlen(buf)+2;
+        if (bSize < MAXCMDBUF)
+            ServerCommand(buf);
+        else
+        {
+            Format(buf,MAXCMDLEN,"%d,%d",i,size);
+            SetArrayString(buffer,0,buf);
+            return Plugin_Continue;
+        }
+    }
+    if (i >= size)
+    {
+        ResizeArray(buffer,0);
+        CloseHandle(buffer);
     }
     return Plugin_Stop;
 }
